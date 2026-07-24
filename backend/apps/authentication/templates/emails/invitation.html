@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #2563eb, #1e40af); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+        <h1 style="color: #fff; margin: 0; font-size: 24px;">DecisioBI</h1>
+        <p style="color: #93c5fd; margin: 5px 0 0;">Invitation à rejoindre {{ organization_name }}</p>
+    </div>
+    <div style="background: #fff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
+        <p>Bonjour{% if first_name %} {{ first_name }}{% endif %},</p>
+        <p>Vous avez été invité à rejoindre l'espace <strong>{{ organization_name }}</strong> sur DecisioBI avec le rôle <strong>{{ role }}</strong>.</p>
+        <p>Voici vos identifiants de connexion :</p>
+        <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 5px 0;"><strong>Nom d'utilisateur :</strong> {{ username }}</p>
+            <p style="margin: 5px 0;"><strong>Mot de passe :</strong> {{ password }}</p>
+        </div>
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{{ login_url }}" style="background: #2563eb; color: #fff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold; display: inline-block;">Se connecter à DecisioBI</a>
+        </div>
+        <p style="color: #6b7280; font-size: 14px;">Nous vous recommandons de changer votre mot de passe après votre première connexion.</p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+        <p style="color: #9ca3af; font-size: 12px;">
+            Si le bouton ne fonctionne pas, copiez et collez ce lien dans votre navigateur :<br>
+            <span style="color: #2563eb;">{{ login_url }}</span>
+        </p>
+    </div>
+</body>
+</html>

@@ -1,0 +1,641 @@
+% ============================================================
+% chapter2.tex  —  Chapitre 2 : Development Methodology
+% ============================================================
+
+\chapter{Development Methodology}
+
+
+\noindent
+Having identified the gaps that justify this work,
+the next logical question is how the proposed solution
+was conceived, structured, and built.
+This chapter describes the development methodology adopted
+for the DecisioBI platform — from the overall architectural
+choices to the modular decomposition, the technology stack,
+the data processing pipeline, and the testing strategy.
+The goal is not to catalogue every library or configuration file,
+but to explain the \emph{reasoning} behind each major technical decision
+and to show that the implementation follows a coherent,
+repeatable, and verifiable process.
+
+
+% ============================================================
+\section{General Approach: Iterative and Modular Development}
+% ============================================================
+
+\noindent
+The development followed an \textbf{iterative and incremental}
+approach. Rather than attempting to design the entire system
+upfront and implement it in a single pass, the project was
+decomposed into numbered modules (M1 through M9),
+each addressing a specific functional domain.
+Each module was developed, tested, and documented independently
+before being integrated into the whole.
+
+\vspace{0.4cm}
+\noindent
+This strategy was chosen for three practical reasons.
+First, it allowed early validation of core assumptions —
+particularly around data ingestion and cleaning —
+before investing effort in downstream features.
+Second, it reduced integration risk: each module
+exposes a well-defined REST API, and modules communicate
+through direct API calls and Celery tasks rather than
+tight code coupling. Third, it mirrors the reality
+of a thesis project with constrained timelines:
+delivering a working M1 + M2 + M3 pipeline
+is more valuable than delivering a half-finished
+system that attempts everything at once.
+
+\vspace{0.4cm}
+\noindent
+The modules are organised in six phases:
+
+\begin{enumerate}
+  \item \textbf{Phase 1 — Foundation:} Authentication and authorisation (M9),
+        providing the security layer that all subsequent modules depend on.
+  \item \textbf{Phase 2 — Data Acquisition:} Data ingestion (M1),
+        handling file upload, preview, ERP template mapping,
+        and async processing.
+  \item \textbf{Phase 3 — Data Quality:} Data cleaning (M2)
+        and inter-source conflict resolution (M3),
+        ensuring that data entering the analytical layer
+        is reliable and coherent.
+  \item \textbf{Phase 4 — Analytics:} KPI calculation (M4)
+        and dashboard construction (M5),
+        transforming clean data into decision-relevant indicators.
+  \item \textbf{Phase 5 — Intelligence:} AI-powered interpretation,
+        adding a layer of automated insight.
+  \item \textbf{Phase 6 — Interaction:} Natural-language chatbot
+        and notification system, making the platform
+        accessible to non-technical users.
+\end{enumerate}
+
+
+% ============================================================
+\section{Architectural Design}
+% ============================================================
+
+\noindent
+The platform adopts a \textbf{client–server architecture}
+with a clear separation between the presentation layer
+(frontend) and the business logic layer (backend).
+This separation is not merely aesthetic — it reflects
+a deliberate choice to keep each layer independently
+testable, deployable, and replaceable.
+
+% --- 2.2.1 Backend ---
+\subsection{Backend: Django REST Framework}
+
+\noindent
+The backend is built on \textbf{Django 6.0.3}
+with the \textbf{Django REST Framework (DRF) 3.17.0}.
+Django was chosen for its mature ecosystem,
+its built-in ORM that abstracts PostgreSQL interactions,
+its signal mechanism that enables event-driven workflows,
+and its extensive documentation — a non-trivial advantage
+when development is carried out by a small team.
+
+\vspace{0.4cm}
+\noindent
+Each functional domain is implemented as a separate
+Django application within a single project:
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{App} & \textbf{Module} & \textbf{Responsibility} \\
+\hline
+\texttt{authentication} & M9 & JWT auth, RBAC, user management \\
+\texttt{ingestion} & M1 & File upload, preview, ERP templates \\
+\texttt{nettoyage} & M2 & Cleaning rules, pipelines, quality scoring \\
+\texttt{conflits} & M3 & Conflict detection, resolution strategies \\
+\texttt{kpi} & M4/M5 & KPI calculation, forecasting, pivots \\
+\texttt{dashboard} & M5 & Preferences, saved views, widgets \\
+\texttt{ia\_interpretation} & M6 & AI analysis with Groq API \\
+\texttt{chatbot} & M8 & Multi-turn conversations, NL2SQL \\
+\hline
+\end{tabular}
+\end{center}
+
+\vspace{0.4cm}
+\noindent
+Each app follows a consistent internal structure:
+\texttt{models.py} defines the data schema,
+\texttt{serializers.py} handles validation and serialisation,
+\texttt{views.py} exposes the API logic,
+\texttt{services.py} encapsulates business rules
+(separated from the HTTP layer for testability),
+and \texttt{urls.py} maps endpoints.
+This consistency is not accidental — it is a deliberate
+convention that reduces cognitive overhead
+when navigating between modules.
+
+% --- 2.2.2 Frontend ---
+\subsection{Frontend: React with TanStack Router}
+
+\noindent
+The frontend is a single-page application built with
+\textbf{React 19}, \textbf{TypeScript 5.8},
+and \textbf{TanStack Router} for file-based routing.
+The choice of React reflects its dominance in the
+ecosystem and the availability of mature component libraries.
+TypeScript was adopted to catch type-related errors
+at compile time rather than at runtime —
+a significant quality gain for a project
+where the frontend interacts with a complex REST API.
+
+\vspace{0.4cm}
+\noindent
+The UI layer uses \textbf{shadcn/ui} (New York style)
+on top of \textbf{Tailwind CSS 4.2},
+providing accessible, composable components
+without imposing a heavy runtime framework.
+Charts are rendered with \textbf{Recharts 2.15},
+chosen for its declarative API and React-native integration.
+
+\vspace{0.4cm}
+\noindent
+The frontend communicates with the backend
+through a singleton \texttt{ApiClient} class
+that centralises authentication headers,
+error handling, and token refresh logic.
+All API calls are typed — the frontend defines
+TypeScript interfaces that mirror the backend serializers,
+ensuring that type mismatches between layers
+are caught during development rather than in production.
+
+% --- 2.2.3 Database ---
+\subsection{Database: PostgreSQL}
+
+\noindent
+\textbf{PostgreSQL 18.1} was selected as the primary data store.
+Its support for JSON fields, partial indexes, and
+complex queries makes it well-suited for a BI platform
+where data shapes vary across sources.
+The schema comprises 33 tables across 9 modules,
+with approximately 400 columns, 50 foreign key relationships,
+and 30 indexes.
+
+\vspace{0.4cm}
+\noindent
+Redis serves as the message broker for Celery
+and as a caching layer for frequently accessed data.
+This separation ensures that long-running tasks
+(ingestion, cleaning)
+do not block the HTTP request–response cycle.
+
+% --- 2.2.4 Asynchronous Processing ---
+\subsection{Asynchronous Processing: Celery}
+
+\noindent
+Several operations — file ingestion, data cleaning,
+conflict detection, KPI calculation —
+are inherently time-consuming.
+They are delegated to \textbf{Celery 5.6.3} workers
+using Redis as the broker.
+This ensures that the API remains responsive
+while background tasks execute,
+and that task progress can be tracked
+through status updates and notifications.
+
+\vspace{0.4cm}
+\noindent
+The workflow follows a consistent pattern:
+the API enqueues a Celery task and returns a job ID
+immediately; the frontend polls the job endpoint
+for status updates; when the task completes,
+the user is notified and can proceed to the next step.
+Each stage requires explicit user confirmation
+before advancing — for example, the user must
+validate cleaning results before they enter
+the conflict detection and KPI calculation stages.
+
+
+% ============================================================
+\section{Technology Stack Summary}
+% ============================================================
+
+\noindent
+Table~\ref{tab:stack} summarises the main technologies
+and their roles in the platform.
+
+\begin{table}[h!]
+\centering
+\caption{Technology stack of the DecisioBI platform.}
+\label{tab:stack}
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Layer} & \textbf{Technology} & \textbf{Version} \\
+\hline
+Backend framework & Django + DRF & 6.0.3 / 3.17.0 \\
+Language (backend) & Python & 3.12.x \\
+Frontend framework & React & 19.2.0 \\
+Language (frontend) & TypeScript & 5.8.3 \\
+Build tool & Vite & 7.3.1 \\
+Router & TanStack Router & 1.168.25 \\
+UI components & shadcn/ui + Tailwind CSS & New York / 4.2.1 \\
+Charts & Recharts & 2.15.4 \\
+Database & PostgreSQL & 18.1 \\
+Cache \& broker & Redis & 7.4.0 \\
+Task queue & Celery & 5.6.3 \\
+Authentication & SimpleJWT & 5.5.1 \\
+AI model & Groq API (Llama 3.3 70B) & -- \\
+Deployment (frontend) & Cloudflare Workers & via wrangler \\
+\hline
+\end{tabular}
+\end{table}
+
+
+% ============================================================
+\section{Modular Decomposition and Data Flow}
+% ============================================================
+
+\noindent
+The platform's processing pipeline follows a linear
+but event-driven sequence, illustrated
+in Figure~\ref{fig:pipeline}.
+
+\begin{figure}[h!]
+\centering
+\fbox{\parbox{0.9\textwidth}{\centering
+\vspace{0.8cm}
+\textbf{Upload (M1)} $\rightarrow$ \textbf{Cleaning (M2)} $\rightarrow$ \textbf{Conflict Detection (M3)} $\rightarrow$ \textbf{KPI Calculation (M4)} $\rightarrow$ \textbf{Dashboard (M5)} $\rightarrow$ \textbf{AI Analysis (M6)} $\rightarrow$ \textbf{Chatbot (M8)}
+\vspace{0.8cm}
+}}
+\caption{Simplified data processing pipeline.}
+\label{fig:pipeline}
+\end{figure}
+
+\noindent
+The pipeline is semi-automatic.
+After uploading a file, the system automatically
+performs ingestion and schema profiling.
+The user is then notified and can trigger
+the cleaning stage, where the system analyses
+the data and proposes a set of automated rules.
+The user reviews, adjusts, and validates these rules
+before they are applied — a deliberate design choice
+that balances automation with control.
+After cleaning, the user can run conflict detection
+and KPI calculation.
+Notifications are generated at each stage
+(file loaded, cleaning started, cleaning completed,
+conflicts detected, KPIs calculated),
+keeping the user informed without requiring them
+to monitor the system actively.
+
+\vspace{0.4cm}
+\noindent
+This design has two important consequences.
+First, it ensures data consistency:
+KPIs are never computed on uncleaned data,
+and conflicts are detected before they can
+pollute downstream analytics.
+Second, it makes the system auditable:
+every transformation is logged, and the user
+can trace the history of any data source
+from upload through to the final dashboard.
+
+
+% ============================================================
+\section{Data Ingestion (M1)}
+% ============================================================
+
+\noindent
+The ingestion module is the entry point
+of the entire pipeline.
+It accepts three file formats — \textbf{CSV},
+\textbf{Excel} (.xlsx, .xls), and \textbf{JSON} —
+and performs the following steps:
+
+\begin{enumerate}
+  \item \textbf{File validation:} format check, size limits,
+        duplicate detection via MD5 checksum.
+  \item \textbf{Schema profiling:} automatic column type inference,
+        null rate calculation, unique value counting.
+  \item \textbf{Preview:} the first rows are returned to the user
+        for visual confirmation before committing.
+  \item \textbf{ERP templates:} predefined column mappings
+        for common export formats (sales, inventory,
+        customers, suppliers, general ledger),
+        reducing manual mapping effort.
+  \item \textbf{Async ingestion:} the file is processed
+        by a Celery task that stores raw data
+        in the \texttt{RawData} table,
+        linked to a \texttt{DataSource} record
+        that tracks status, schema, and provenance.
+\end{enumerate}
+
+\noindent
+RBAC is enforced at this stage:
+only users with the \textit{admin} or \textit{analyst}
+role can upload data; \textit{viewer} accounts
+receive a 403 Forbidden response.
+
+
+% ============================================================
+\section{Data Cleaning (M2)}
+% ============================================================
+
+\noindent
+The cleaning module is the most granular
+component of the platform.
+It provides a rule engine with 18+ cleaning rule types,
+including:
+
+\begin{itemize}
+  \item Structural operations: remove empty rows,
+        rename columns, split/merge columns.
+  \item Value transformations: standardise text,
+        fill missing values (mean, median, mode, constant),
+        regex replace, value mapping.
+  \item Format validation: date parsing,
+        amount normalisation, email/phone format checks.
+  \item Quality scoring: a composite score
+        computed from completeness, consistency,
+        and accuracy metrics.
+\end{itemize}
+
+\noindent
+Rules are grouped into \textbf{pipelines} —
+ordered sequences of rules applied in sequence.
+The user can preview the effect of a pipeline
+before applying it, receiving a diff sample
+and a quality score comparison.
+After application, a \textbf{before/after comparison}
+is generated, and the user must explicitly
+validate or reject the cleaning results.
+This two-step process (preview then validate)
+is a deliberate design choice:
+it gives the user control over data transformations
+while automating the tedious parts.
+
+
+% ============================================================
+\section{Conflict Resolution (M3)}
+% ============================================================
+
+\noindent
+After cleaning, the system automatically
+scans for inter-source conflicts —
+inconsistencies between different data sources
+that cover overlapping entities or time periods.
+Four conflict types are detected:
+
+\begin{enumerate}
+  \item Duplicate records (hash-based detection).
+  \item Missing values across sources.
+  \item Data type inconsistencies.
+  \item Format inconsistencies (regex-based).
+\end{enumerate}
+
+\noindent
+The \texttt{ConflictType} model is extensible —
+users can create additional custom types
+via the API, but the built-in detection engine
+covers these four core categories.
+
+\noindent
+For each conflict, the system recommends
+a resolution strategy from seven options:
+\textit{manual override}, \textit{auto-merge},
+\textit{default value}, \textit{user selected},
+\textit{majority vote}, \textit{latest value},
+and \textit{discard}.
+The user can accept the recommendation
+or override it.
+Every resolution is logged in an activity trail,
+providing full auditability.
+
+
+% ============================================================
+\section{KPI Calculation and Analytics (M4/M5)}
+% ============================================================
+
+\noindent
+KPIs are the analytical core of the platform.
+Each KPI is defined by a formula —
+which can be SQL, Python, or Excel-style —
+and is automatically calculated
+whenever the underlying data changes.
+This \textbf{event-driven calculation}
+ensures that indicators are always up to date
+without requiring manual recalculation.
+
+\vspace{0.4cm}
+\noindent
+The KPI module provides three analytical capabilities:
+
+\begin{itemize}
+  \item \textbf{Variance analysis:} comparison against
+        targets and previous periods.
+  \item \textbf{Anomaly detection:} Z-score analysis
+        flagging values that deviate significantly
+        from historical patterns.
+  \item \textbf{Forecasting:} linear regression
+        with 95\% confidence intervals,
+        trend direction, and R-squared goodness of fit.
+\end{itemize}
+
+\noindent
+The M5 extension adds configurable pivot tables
+with eight aggregation functions,
+intelligent field aliasing with bilingual support
+(French/English), persistent user preferences,
+and saved dashboard views.
+
+
+% ============================================================
+\section{Artificial Intelligence Integration}
+% ============================================================
+
+\noindent
+AI is integrated at two levels
+of the platform.
+
+\vspace{0.4cm}
+\noindent
+\textbf{KPI interpretation} uses the Groq API
+with the Llama 3.3 70B model to generate
+natural-language analyses of KPI data.
+The user selects a data source and specific indicators,
+and the model produces a structured interpretation
+including trend analysis, comparisons, and recommendations.
+This feature is designed for decision-makers
+who need quick insights without navigating
+complex dashboards.
+
+\vspace{0.4cm}
+\noindent
+\textbf{The chatbot} provides a conversational
+interface to the platform.
+It supports multi-turn conversations,
+intent recognition, entity extraction,
+and natural-language-to-SQL (NL2SQL) generation.
+The user can ask questions in plain French
+and receive data-driven answers,
+lowering the barrier to adoption
+for non-technical staff.
+
+
+% ============================================================
+\section{Security and Access Control}
+% ============================================================
+
+\noindent
+Security is implemented at multiple layers.
+
+\vspace{0.4cm}
+\noindent
+\textbf{Authentication} uses JSON Web Tokens (JWT)
+with access tokens valid for 60 minutes
+and refresh tokens valid for 7 days.
+Token rotation and blacklisting are enabled,
+ensuring that revoked sessions cannot be reused.
+
+\vspace{0.4cm}
+\noindent
+\textbf{Authorisation} follows a Role-Based Access
+Control (RBAC) model with three roles:
+\textit{admin} (full access),
+\textit{analyst} (read and write data, no user management),
+and \textit{viewer} (read-only access).
+Each API endpoint checks the caller's role
+before executing the request.
+
+\vspace{0.4cm}
+\noindent
+\textbf{Data isolation} is enforced at the database level:
+each organisation's data is scoped
+through foreign key relationships,
+preventing cross-tenant data leakage.
+SQL injection is prevented through Django's ORM
+and parameterised queries.
+Python formula execution is sandboxed
+to prevent arbitrary code execution.
+Password storage uses PBKDF2 hashing (Django's default),
+and API tokens are stored as SHA-256 hashes.
+
+
+% ============================================================
+\section{Testing Strategy}
+% ============================================================
+
+\noindent
+Testing follows the \textbf{Arrange–Act–Assert} pattern
+and is organised per module in three categories:
+
+\begin{enumerate}
+  \item \textbf{Model tests:} field constraints,
+        relationships, computed fields, timestamps.
+  \item \textbf{API tests:} status codes,
+        response structure, filtering, pagination,
+        permissions.
+  \item \textbf{Security tests:} authentication requirements,
+        authorisation enforcement, data isolation,
+        input validation (SQL injection, XSS,
+        malicious inputs), rate limiting.
+\end{enumerate}
+
+\noindent
+The test framework is \textbf{pytest 9.0.2}
+with \textbf{pytest-django} for database access
+and \textbf{pytest-cov} for coverage measurement.
+Custom test fixtures are used instead of
+external factory libraries,
+keeping the dependency footprint minimal.
+
+\vspace{0.4cm}
+\noindent
+The coverage target is \textbf{70\%} minimum,
+configured as a hard failure threshold
+in \texttt{pytest.ini}.
+Current results show 161+ tests across all modules,
+with a 94.8\% pass rate (128 out of 135 tests passing).
+The M4 KPI module alone has 109 tests,
+covering models, services, serializers,
+integration scenarios, and security.
+
+\vspace{0.4cm}
+\noindent
+This testing discipline serves two purposes
+in the context of this thesis.
+First, it provides empirical evidence
+that the platform works as specified —
+each module can be verified independently.
+Second, it documents the expected behaviour
+of the system: reading the test suite
+is in many cases clearer than reading
+the implementation code,
+making the tests a form of executable specification.
+
+
+% ============================================================
+\section{Deployment Architecture}
+% ============================================================
+
+\noindent
+The backend runs on a server with Python 3.12,
+PostgreSQL 18.1, and Redis 7.4.
+Celery workers run as background processes,
+consuming tasks from Redis queues.
+The frontend is deployed on \textbf{Cloudflare Workers},
+a serverless edge platform that provides
+low-latency access from any geographic location —
+a relevant consideration for users
+in West Africa where centralised hosting
+can introduce significant latency.
+
+\vspace{0.4cm}
+\noindent
+In development, the Vite dev server proxies
+\texttt{/api} requests to the Django backend
+running on \texttt{localhost:8000}.
+In production, the frontend is built as static assets
+served by Cloudflare, with API calls directed
+to the backend's public URL
+configured via the \texttt{VITE\_API\_BASE\_URL}
+environment variable.
+
+
+% ============================================================
+\section{Chapter Summary}
+% ============================================================
+
+\noindent
+The methodology described in this chapter
+is characterised by three principles.
+The first is \textbf{modularity}: each functional domain
+is encapsulated in a self-contained application
+with its own models, services, and API,
+reducing coupling and enabling independent testing.
+The second is \textbf{guided automation}:
+the pipeline automates tedious tasks
+while keeping the user in control at critical
+decision points, ensuring data quality
+through deliberate validation steps.
+The third is \textbf{verifiability}:
+every module is accompanied by a comprehensive test suite
+that documents its expected behaviour
+and provides empirical evidence of correctness.
+
+\vspace{0.4cm}
+\noindent
+These principles are not abstract preferences —
+they are responses to the specific constraints
+identified in Chapter~1: small teams, manual processes,
+limited resources, and the need for tools
+that work reliably without dedicated IT support.
+The next chapter presents the platform itself,
+showing how these principles translate
+into a functional system.
+
+\vspace{0.7cm}
+\begin{center}
+  \textcolor{BITred!40}{\rule{0.35\linewidth}{0.5pt}}
+  \hspace{0.5em}
+  \textcolor{BITred}{$\star$}
+  \hspace{0.5em}
+  \textcolor{BITred!40}{\rule{0.35\linewidth}{0.5pt}}
+\end{center}

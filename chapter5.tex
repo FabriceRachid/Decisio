@@ -1,0 +1,552 @@
+% ============================================================
+% chapter5.tex  —  Chapitre 5 : Discussion, Limitations
+%                  and Future Perspectives
+% ============================================================
+
+\chapter{Discussion, Limitations and Future Perspectives}
+
+
+\noindent
+The previous chapters described the design, architecture,
+and implementation of DecisioBI.
+This final chapter reflects on the results obtained,
+discusses the limitations encountered during development,
+and outlines perspectives for future improvements
+and extensions.
+
+
+% ============================================================
+\section{Discussion}
+% ============================================================
+
+\noindent
+DecisioBI demonstrates that a modular, open-source
+Business Intelligence platform can be built
+to address the specific needs of SMEs
+in resource-constrained environments.
+The following discussion examines
+how the platform meets its original objectives
+and where trade-offs were necessary.
+
+% --- 5.1.1 ---
+\subsection{Modularity and Separation of Concerns}
+
+\noindent
+The decision to decompose the platform into nine
+independent Django applications proved effective.
+Each module (\texttt{ingestion}, \texttt{nettoyage},
+\texttt{conflits}, \texttt{kpi}, \texttt{dashboard},
+\texttt{ia\_interpretation}, \texttt{chatbot},
+\texttt{notifications}, \texttt{authentication})
+maintains its own models, services, serializers,
+and API endpoints.
+This separation made it possible to develop
+and test each module independently,
+reducing integration risk
+and simplifying debugging.
+
+\vspace{0.3cm}
+\noindent
+However, this modularity introduced a trade-off:
+some degree of code duplication exists
+across modules, particularly in serialisation
+logic and error handling.
+A shared utility layer could reduce this duplication
+without compromising the separation of responsibilities.
+
+% --- 5.1.2 ---
+\subsection{Semi-Automatic Pipeline Design}
+
+\noindent
+One of the most deliberate architectural choices
+was making the processing pipeline semi-automatic
+rather than fully automated.
+After uploading a file, the system performs
+ingestion and schema profiling automatically,
+but the user must explicitly trigger
+and validate each subsequent stage —
+cleaning, conflict detection, and KPI calculation.
+
+\vspace{0.3cm}
+\noindent
+This human-in-the-loop approach was motivated
+by the nature of SME data.
+Operational data from small businesses
+is often messy, inconsistent,
+and context-dependent.
+Fully automated pipelines risk propagating
+errors silently.
+By requiring user validation at critical decision points,
+DecisioBI ensures that business users
+retain control over their data
+while benefiting from automated analysis.
+
+\vspace{0.3cm}
+\noindent
+The downside is that this approach
+increases the time required to go
+from raw data to actionable dashboard.
+For organisations with large volumes of data,
+a more automated pipeline with optional override
+might be preferable.
+
+% --- 5.1.3 ---
+\subsection{AI Integration}
+
+\noindent
+The integration of the Groq API
+with the Llama~3.3~70B model
+provides natural-language interpretation
+of KPI data and a conversational chatbot
+interface.
+This approach offers several advantages:
+no model hosting is required,
+the API is fast and reliable,
+and the model produces coherent analyses
+in both French and English.
+
+\vspace{0.3cm}
+\noindent
+The main limitation is dependency on an external service.
+If the Groq API becomes unavailable
+or changes its pricing model,
+both the KPI interpretation and chatbot features
+become non-functional.
+A fallback mechanism or local model
+could mitigate this risk.
+
+% --- 5.1.4 ---
+\subsection{Testing and Quality Assurance}
+
+\noindent
+The test suite comprises over 478 test functions
+and classes across 35 test files,
+covering model constraints, API behaviour,
+service logic, and security enforcement.
+The 70\% coverage target was set
+as a pragmatic minimum —
+high enough to catch critical defects
+without imposing an unrealistic burden
+on a small development team.
+
+\vspace{0.3cm}
+\noindent
+The testing strategy validated
+that RBAC enforcement, data isolation,
+and input validation work as specified.
+However, performance testing
+and load testing were not part
+of the evaluation scope,
+which represents a gap
+that should be addressed
+before production deployment.
+
+
+% ============================================================
+\section{Limitations}
+% ============================================================
+
+\noindent
+Despite the progress achieved,
+DecisioBI has several limitations
+that should be acknowledged honestly.
+
+% --- 5.2.1 ---
+\subsection{Deployment and Infrastructure}
+
+\noindent
+The platform was developed and tested
+in a local Windows environment.
+Several infrastructure components
+are not fully operational:
+
+\begin{itemize}
+  \item \textbf{Redis is not installed} on the development
+        machine, which means Celery workers
+        and background task processing
+        cannot be tested locally.
+        All asynchronous operations
+        (file ingestion, data cleaning,
+        KPI calculation) require Redis
+        to function.
+  \item \textbf{No containerisation} (Docker)
+        or continuous integration / continuous
+        deployment (CI/CD) pipeline exists.
+        Deployment to production
+        would require manual configuration.
+  \item \textbf{No reverse proxy} or SSL termination
+        is configured for the backend.
+        Production deployment would require
+        nginx or a similar solution.
+\end{itemize}
+
+% --- 5.2.2 ---
+\subsection{Data Processing}
+
+\noindent
+The cleaning module provides 18 rule types
+and a pipeline engine,
+but several limitations remain:
+
+\begin{itemize}
+  \item \textbf{No data versioning:}
+        once data is cleaned,
+        the original raw data
+        cannot be recovered
+        through the user interface.
+        The \texttt{RawData} table
+        preserves the original upload,
+        but no rollback mechanism exists.
+  \item \textbf{Semi-manual workflow:}
+        as discussed in Section~5.1.2,
+        the requirement for user validation
+        at each stage
+        limits the platform's ability
+        to process data autonomously.
+  \item \textbf{No streaming ingestion:}
+        the platform only supports
+        file-based upload.
+        Real-time data streams
+        (e.g., from APIs or message queues)
+        are not supported.
+\end{itemize}
+
+% --- 5.2.3 ---
+\subsection{Analytics and Intelligence}
+
+\noindent
+The KPI module provides variance analysis,
+Z-score anomaly detection,
+and linear regression forecasting.
+However:
+
+\begin{itemize}
+  \item \textbf{No multivariate anomaly detection:}
+        the Z-score method evaluates
+        each KPI independently.
+        The Isolation Forest algorithm
+        was implemented in a separate module
+        but is not currently exposed
+        in the user interface.
+  \item \textbf{No predictive analytics beyond linear models:}
+        the forecasting capability
+        is limited to linear regression.
+        Seasonal patterns, exponential smoothing,
+        and machine learning-based forecasting
+        are not implemented.
+  \item \textbf{No alerting system:}
+        while the \texttt{KPIAlert} model exists,
+        the multi-channel notification system
+        (email, webhook, Slack)
+        is not fully integrated
+        into the user workflow.
+\end{itemize}
+
+% --- 5.2.4 ---
+\subsection{User Experience}
+
+\noindent
+The frontend provides a functional interface,
+but several UX limitations exist:
+
+\begin{itemize}
+  \item \textbf{No mobile optimisation:}
+        the interface is designed
+        for desktop browsers.
+        Responsive design is partially implemented
+        through Tailwind CSS,
+        but no dedicated mobile experience exists.
+  \item \textbf{French-only interface:}
+        while the chatbot supports bilingual
+        interaction (French/English),
+        the user interface itself
+        is only available in French.
+  \item \textbf{No offline capability:}
+        the platform requires
+        a persistent internet connection.
+        No service worker or caching strategy
+        is implemented for offline access.
+  \item \textbf{No data export beyond PDF:}
+        users can export dashboards to PDF,
+        but CSV or Excel export
+        of dashboard data is not available
+        from the dashboard page.
+\end{itemize}
+
+% --- 5.2.5 ---
+\subsection{Security}
+
+\noindent
+The security implementation covers
+authentication, authorisation, and data isolation.
+However:
+
+\begin{itemize}
+  \item \textbf{No rate limiting:}
+        beyond Django REST Framework's
+        default throttling,
+        no rate limiting is configured
+        for API endpoints.
+        This could leave the platform
+        vulnerable to brute-force attacks.
+  \item \textbf{No audit logging:}
+        while the \texttt{conflits} module
+        includes an \texttt{ActivityLog} model,
+        no system-wide audit trail
+        exists for tracking user actions
+        across all modules.
+  \item \textbf{No HTTPS enforcement:}
+        the development server
+        runs over HTTP.
+        Production deployment
+        would require TLS configuration.
+\end{itemize}
+
+% --- 5.2.6 ---
+\subsection{Testing Scope}
+
+\noindent
+While the test suite is substantial,
+several areas are not covered:
+
+\begin{itemize}
+  \item \textbf{No performance or load testing:}
+        response times under heavy load
+        are not measured.
+  \item \textbf{No end-to-end testing:}
+        no browser automation tests
+        (e.g., Cypress, Playwright)
+        validate the complete user workflow.
+  \item \textbf{No cross-browser testing:}
+        the frontend was tested
+        primarily on Chromium-based browsers.
+\end{itemize}
+
+
+% ============================================================
+\section{Future Perspectives}
+% ============================================================
+
+\noindent
+The limitations identified above
+suggest several directions
+for future development.
+
+% --- 5.3.1 ---
+\subsection{Infrastructure Improvements}
+
+\noindent
+The highest priority improvements
+are infrastructure-related:
+
+\begin{enumerate}
+  \item \textbf{Containerisation:}
+        Docker Compose should be configured
+        to package the backend, frontend,
+        PostgreSQL, and Redis
+        into a single deployable unit.
+        This would eliminate the dependency
+        on manual server configuration
+        and enable reproducible deployments.
+  \item \textbf{CI/CD pipeline:}
+        a GitHub Actions workflow
+        should be implemented
+        to run tests automatically
+        on each commit,
+        build the frontend,
+        and deploy to production.
+  \item \textbf{Production-ready deployment:}
+        nginx as a reverse proxy,
+        Gunicorn as the WSGI server,
+        and Let's Encrypt for TLS
+        would make the platform
+        production-ready.
+\end{enumerate}
+
+% --- 5.3.2 ---
+\subsection{Data Processing Enhancements}
+
+\noindent
+Several improvements would strengthen
+the data processing pipeline:
+
+\begin{enumerate}
+  \item \textbf{Data versioning:}
+        implementing a versioning system
+        for cleaned data
+        would allow users to compare
+        different cleaning iterations
+        and roll back if necessary.
+  \item \textbf{Automated cleaning mode:}
+        an optional fully automated mode
+        would allow advanced users
+        to skip manual validation
+        when processing trusted data sources.
+  \item \textbf{Streaming ingestion:}
+        support for API-based
+        and message queue-based data sources
+        would extend the platform's applicability
+        beyond file-based imports.
+  \item \textbf{Multi-sheet Excel support:}
+        allowing users to select
+        specific sheets from Excel files
+        and define inter-sheet relationships
+        would improve compatibility
+        with real-world ERP exports.
+\end{enumerate}
+
+% --- 5.3.3 ---
+\subsection{Analytics and Intelligence}
+
+\noindent
+The analytical capabilities
+could be extended in several ways:
+
+\begin{enumerate}
+  \item \textbf{Advanced forecasting:}
+        exponential smoothing,
+        ARIMA models,
+        and Prophet-based forecasting
+        would provide more accurate predictions
+        for seasonal and non-linear data.
+  \item \textbf{Multivariate anomaly detection:}
+        re-exposing the Isolation Forest algorithm
+        through the user interface
+        would enable detection of complex
+        multi-dimensional outliers.
+  \item \textbf{Custom KPI formulas:}
+        allowing users to define KPIs
+        through a visual formula builder
+        rather than writing SQL or Python
+        would lower the barrier to entry.
+  \item \textbf{Drill-down capabilities:}
+        enabling users to navigate
+        from aggregate KPI values
+        to underlying raw data
+        would improve analytical depth.
+\end{enumerate}
+
+% --- 5.3.4 ---
+\subsection{User Experience Improvements}
+
+\noindent
+The user experience could be enhanced through:
+
+\begin{enumerate}
+  \item \textbf{Responsive mobile design:}
+        optimising the interface
+        for tablet and smartphone access
+        would make the platform accessible
+        to users who primarily work on mobile devices.
+  \item \textbf{Internationalisation:}
+        adding English and local language
+        support for the user interface
+        would broaden the platform's reach.
+  \item \textbf{Onboarding workflow:}
+        a guided tutorial
+        for new users
+        would reduce the learning curve
+        and improve adoption rates.
+  \item \textbf{Real-time notifications:}
+        WebSocket-based push notifications
+        would replace the current polling mechanism
+        and provide a more responsive experience.
+\end{enumerate}
+
+% --- 5.3.5 ---
+\subsection{SaaS and Multi-Tenancy}
+
+\noindent
+The current architecture supports
+organisation-based data isolation
+through foreign key scoping,
+but lacks several features
+required for a true SaaS deployment:
+
+\begin{enumerate}
+  \item \textbf{Subscription and billing management:}
+        a Stripe or LemonSqueezy integration
+        would enable tiered pricing plans.
+  \item \textbf{Usage quotas:}
+        enforcing limits on data sources,
+        KPIs, and API calls per organisation
+        would prevent resource abuse.
+  \item \textbf{Tenant administration:}
+        self-service organisation creation,
+        invitation workflows,
+        and role management
+        would reduce operational overhead.
+\end{enumerate}
+
+% --- 5.3.6 ---
+\subsection{Reporting and Compliance}
+
+\noindent
+The notification module provides
+PDF report generation,
+but a complete reporting system would include:
+
+\begin{enumerate}
+  \item \textbf{Scheduled reports:}
+        automatic generation and email delivery
+        of daily, weekly, or monthly reports.
+  \item \textbf{Excel export:}
+        full-fidelity export of dashboards
+        and pivot tables to Excel format.
+  \item \textbf{Audit trail:}
+        system-wide logging of user actions
+        for regulatory compliance.
+  \item \textbf{Data lineage:}
+        tracking the origin and transformation
+        history of each data point
+        from ingestion to dashboard.
+\end{enumerate}
+
+
+% ============================================================
+\section{Chapter Summary}
+% ============================================================
+
+\noindent
+DecisioBI demonstrates that a modular,
+open-source Business Intelligence platform
+can be built to address SME needs
+in resource-constrained environments.
+The iterative development approach,
+the semi-automatic pipeline design,
+and the integration of large language models
+for data interpretation
+represent practical engineering decisions
+shaped by the realities of small-team development.
+
+\vspace{0.3cm}
+\noindent
+The platform's main strengths
+are its modular architecture,
+its human-centred pipeline design,
+and its accessible AI integration.
+Its main limitations
+are infrastructure readiness,
+the lack of advanced analytics,
+and the absence of mobile optimisation.
+
+\vspace{0.3cm}
+\noindent
+Future work should prioritise
+containerisation and production deployment,
+advanced forecasting and anomaly detection,
+and the extension of the platform
+into a multi-tenant SaaS offering.
+These improvements would transform DecisioBI
+from a thesis prototype
+into a deployable product
+capable of serving SMEs across West Africa.
+
+\vspace{0.7cm}
+\begin{center}
+  \textcolor{BITred!40}{\rule{0.35\linewidth}{0.5pt}}
+  \hspace{0.5em}
+  \textcolor{BITred}{$\star$}
+  \hspace{0.5em}
+  \textcolor{BITred!40}{\rule{0.35\linewidth}{0.5pt}}
+\end{center}

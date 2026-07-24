@@ -1,0 +1,896 @@
+% ============================================================
+% chapter3.tex  —  Chapitre 3 : Conception et Modélisation
+% ============================================================
+
+\chapter{Conception et Modélisation}
+
+
+\noindent
+The previous chapter described \emph{how} the platform was built.
+This chapter describes \emph{what} was designed and \emph{why}
+each component takes the form it does.
+It presents the conceptual models, the database schema,
+the API structure, and the interaction patterns
+that define the DecisioBI platform.
+The goal is to provide a complete, verifiable blueprint
+of the system — one from which a reader could reconstruct
+the implementation or evaluate its fitness for purpose.
+
+
+% ============================================================
+\section{Exigences Fonctionnelles}
+% ============================================================
+
+\noindent
+Based on the gap analysis conducted in Chapter~1
+and the target user profile (SME managers and analysts
+in Sub-Saharan Africa), the following functional
+requirements were identified.
+Each requirement is expressed as a user story
+in the format \textit{As a [role], I want [action]
+so that [benefit].}
+
+% --- Tableau des exigences fonctionnelles ---
+\begin{table}[h!]
+\centering
+\caption{Exigences fonctionnelles principales.}
+\label{tab:exigences}
+\small
+\begin{tabular}{|c|p{4.5cm}|p{4.5cm}|}
+\hline
+\textbf{ID} & \textbf{Exigence} & \textbf{Justification} \\
+\hline
+EF01 & As an admin, I want to register my organisation
+      and invite users so that my team can collaborate. & Première utilisation — besoin d'espace de travail partagé. \\
+\hline
+EF02 & As an analyst, I want to upload CSV, Excel, and JSON files
+      so that I can consolidate data from multiple sources. & Les PME utilisent principalement des fichiers plats. \\
+\hline
+EF03 & As an analyst, I want to preview data before import
+      so that I can catch errors early. & Éviter les imports erronés. \\
+\hline
+EF04 & As an analyst, I want the system to automatically clean
+      my data so that I don't spend hours on manual corrections. & Le nettoyage manuel est la principale source de retard. \\
+\hline
+EF05 & As an analyst, I want to review and validate cleaning results
+      so that I retain control over my data. & Transparence et traçabilité des transformations. \\
+\hline
+EF06 & As a manager, I want to see conflicts between data sources
+      so that I can trust the consolidated picture. & Conflits invisibles mènent à de mauvaises décisions. \\
+\hline
+EF07 & As a manager, I want to view KPIs automatically calculated
+      from my data so that I can monitor performance in real time. & Remplacer les tableaux Excel manuels. \\
+\hline
+EF08 & As a manager, I want to receive alerts when a KPI
+      crosses a threshold so that I can react quickly. & Détection proactive des anomalies. \\
+\hline
+EF09 & As a manager, I want to interact with data in natural language
+      so that I don't need to learn SQL or BI tools. & Accessibilité pour les utilisateurs non techniques. \\
+\hline
+EF10 & As an admin, I want to control who can access what
+      so that sensitive data remains protected. & Sécurité et conformité. \\
+\hline
+\end{tabular}
+\end{table}
+
+
+% ============================================================
+\section{Exigences Non Fonctionnelles}
+% ============================================================
+
+\noindent
+Beyond functional behaviour, the platform must satisfy
+several non-functional requirements:
+
+\begin{itemize}
+  \item \textbf{Performance:} API response times under 200\,ms
+        for standard operations; KPI calculation
+        completes within seconds for datasets
+        up to 100\,000 rows.
+  \item \textbf{Scalability:} the architecture must support
+        concurrent users from multiple organisations
+        without degradation.
+  \item \textbf{Usability:} the interface must be navigable
+        by users with limited technical training;
+        all labels are in French.
+  \item \textbf{Security:} JWT-based authentication with
+        role-based access control;
+        data isolation between organisations;
+        password hashing and account lockout.
+  \item \textbf{Reliability:} background tasks (ingestion,
+        cleaning) must not crash the API;
+        failed tasks must be retryable.
+  \item \textbf{Accessibility:} the frontend must function
+        under low-bandwidth conditions
+        typical of West African networks.
+\end{itemize}
+
+
+% ============================================================
+\section{Modélisation des Cas d'Utilisation}
+% ============================================================
+
+\noindent
+The platform involves three principal actor categories
+and a machine actor (the AI engine).
+Table~\ref{tab:acteurs} defines these actors.
+
+\begin{table}[h!]
+\centering
+\caption{Acteurs du système.}
+\label{tab:acteurs}
+\begin{tabular}{|l|p{8cm}|}
+\hline
+\textbf{Acteur} & \textbf{Description} \\
+\hline
+Administrateur & Gère l'organisation, les utilisateurs,
+                 les rôles et la configuration système.
+                 Seul acteur pouvant créer des comptes
+                 et modifier les permissions. \\
+\hline
+Analyste & Importe, nettoie et transforme les données.
+           Peut créer des KPI et des règles de nettoyage.
+           Ne peut pas gérer les utilisateurs. \\
+\hline
+Manager & Consulte les tableaux de bord, les KPI,
+          les alertes et les analyses IA.
+          Accès en lecture seule aux données. \\
+\hline
+Moteur IA & Génère des interprétations de KPI,
+            détecte les anomalies et répond
+            aux questions en langage naturel.
+            Acteur non humain, déclenché par le système. \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent
+The principal use cases are organised by module
+in Table~\ref{tab:cas_utilisation}.
+
+\begin{table}[h!]
+\centering
+\caption{Principaux cas d'utilisation.}
+\label{tab:cas_utilisation}
+\small
+\begin{tabular}{|c|l|l|l|}
+\hline
+\textbf{ID} & \textbf{Cas d'utilisation} & \textbf{Acteur principal} & \textbf{Module} \\
+\hline
+CU01 & S'inscrire / Créer l'organisation & Admin & M9 \\
+CU02 & Se connecter & Tous & M9 \\
+CU03 & Gérer les utilisateurs & Admin & M9 \\
+\hline
+CU04 & Importer un fichier (CSV/Excel/JSON) & Analyste & M1 \\
+CU05 & Aperçu des données avant import & Analyste & M1 \\
+CU06 & Appliquer un template ERP & Analyste & M1 \\
+\hline
+CU07 & Exécuter un pipeline de nettoyage & Analyste & M2 \\
+CU08 & Valider les résultats de nettoyage & Analyste & M2 \\
+CU09 & Voir la comparaison avant/après & Manager & M2 \\
+\hline
+CU10 & Détecter les conflits inter-sources & Système & M3 \\
+CU11 & Résoudre un conflit & Analyste & M3 \\
+CU12 & Consulter le journal d'audit & Admin & M3 \\
+\hline
+CU13 & Consulter un KPI & Manager & M4 \\
+CU14 & Créer un KPI personnalisé & Analyste & M4 \\
+CU15 & Configurer une alerte KPI & Analyste & M4 \\
+\hline
+CU16 & Construire un tableau de bord & Manager & M5 \\
+CU17 & Sauvegarder une vue personnalisée & Manager & M5 \\
+\hline
+CU18 & Demander une analyse IA & Manager & M6 \\
+CU19 & Exécuter la détection d'anomalies & Système & M7 \\
+CU20 & Consulter les anomalies détectées & Manager & M7 \\
+\hline
+CU21 & Poser une question au chatbot & Manager & M8 \\
+CU22 & Démarrer une session de conversation & Manager & M8 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+% ============================================================
+\section{Modèle Conceptuel de Données}
+% ============================================================
+
+\noindent
+The database design follows a relational model
+with 27 tables distributed across 10 modules.
+The schema is presented below at the conceptual level,
+focusing on entities, attributes, and relationships.
+
+% --- 3.4.1 Authentification et Organisation ---
+\subsection{Module d'Authentification (M9)}
+
+\noindent
+The authentication module is built around four entities
+that implement a multi-tenant RBAC model:
+
+\begin{itemize}
+  \item \textbf{Organization} — represents a company
+        or workspace. Each registration creates
+        one organisation. Fields: name, sector, size,
+        country, created\_by, timestamps.
+  \item \textbf{UserProfile} — extends Django's built-in
+        User with role (admin/analyst/viewer),
+        department, phone, MFA settings,
+        failed login tracking, and account lockout
+        (5 attempts $\rightarrow$ 15-minute lockout).
+        Linked to Organization via foreign key.
+  \item \textbf{AuthToken} — API tokens for programmatic
+        access. Supports scopes, IP whitelisting,
+        rate limiting (1\,000 requests default),
+        and usage tracking.
+  \item \textbf{Notification} — in-app notifications
+        for pipeline events (file loaded, cleaning
+        in progress, cleaning completed).
+\end{itemize}
+
+% --- 3.4.2 Ingestion ---
+\subsection{Module d'Ingestion (M1)}
+
+\noindent
+Two entities manage the data acquisition process:
+
+\begin{itemize}
+  \item \textbf{DataSource} — metadata record for each
+        uploaded file. Tracks source type (CSV, Excel, JSON),
+        file size, row/column counts, encoding,
+        checksum (MD5), status (pending $\rightarrow$
+        processing $\rightarrow$ completed $\rightarrow$ failed),
+        schema version, and lineage information
+        (parent source for versioning).
+  \item \textbf{RawData} — individual rows stored as
+        JSON documents. Each row is linked to its
+        DataSource and identified by row number.
+        A unique constraint on (source, row\_number)
+        prevents duplicate storage.
+\end{itemize}
+
+\noindent
+An \textbf{IngestionJob} entity tracks the state
+of asynchronous ingestion tasks, including
+Celery task ID, progress percentage, and error messages.
+
+% --- 3.4.3 Nettoyage ---
+\subsection{Module de Nettoyage (M2)}
+
+\noindent
+The cleaning module introduces three entities:
+
+\begin{itemize}
+  \item \textbf{CleaningRule} — a reusable cleaning operation
+        defined by a rule type (18 available types),
+        column targeting (pattern or explicit list),
+        parameters, and priority. Rules track
+        execution count and success rate.
+  \item \textbf{CleaningPipeline} — an ordered collection
+        of rules applied as a sequence.
+        Supports quality gates (minimum quality score,
+        maximum missing rate) and source-type scoping.
+  \item \textbf{CleaningJob} — execution record
+        linking a source to a rule or pipeline.
+        Tracks rows processed, affected, skipped,
+        and failed; duration; memory usage;
+        and whether the job was auto-triggered.
+  \item \textbf{CleanedData} — stores the cleaned version
+        of each row, linked to the original RawData.
+        Includes change tracking (JSON list of modifications),
+        quality score, and validation status.
+\end{itemize}
+
+% --- 3.4.4 Conflits ---
+\subsection{Module de Résolution des Conflits (M3)}
+
+\noindent
+Three entities manage inter-source conflicts:
+
+\begin{itemize}
+  \item \textbf{ConflictType} — lookup table defining
+        six conflict categories: duplicate records,
+        missing values, data type issues,
+        format inconsistencies, cross-source contradictions,
+        and custom types. Each type specifies
+        severity, auto-resolve capability,
+        and default resolution strategy.
+  \item \textbf{Conflict} — represents a detected conflict
+        instance. Links to a DataSource and ConflictType.
+        Tracks affected columns, row IDs,
+        status (detected $\rightarrow$ investigating
+        $\rightarrow$ resolving $\rightarrow$ resolved),
+        priority, acknowledgement, assignment,
+        due date, and impact score.
+  \item \textbf{ConflictResolution} — audit record
+        of how a conflict was resolved.
+        Stores the resolution method (7 options:
+        manual override, auto merge, default value,
+        user selected, majority vote, latest value,
+        discard), chosen value, alternative values,
+        confidence score, and approval chain.
+\end{itemize}
+
+\noindent
+An \textbf{ActivityLog} entity provides a comprehensive
+audit trail of all user actions across the platform,
+capturing user identity, action type, resource,
+IP address, user agent, response time,
+and risk score.
+
+% --- 3.4.5 KPI ---
+\subsection{Module KPI (M4/M5)}
+
+\noindent
+Three entities form the analytical core:
+
+\begin{itemize}
+  \item \textbf{KPI} — defines a key performance indicator
+        with formula (SQL, Python, or Excel-style),
+        target value, thresholds (warning, critical),
+        frequency (daily to yearly), category,
+        source table, measure and dimension columns,
+        and optional parent-child hierarchy.
+  \item \textbf{KPICalculation} — stores a computed value
+        for a specific time period.
+        Tracks previous value, variance (absolute
+        and percentage), status (on target, warning,
+        critical), breakdown details, data quality score,
+        execution time, and optional forecast value
+        with confidence interval.
+  \item \textbf{KPIAlert} — configures threshold-based
+        or anomaly-based alerts.
+        Supports multi-channel notification
+        (email, webhook, Slack), cooldown periods,
+        escalation policies, and acknowledgement tracking.
+\end{itemize}
+
+% --- 3.4.6 Tableau de bord ---
+\subsection{Module Tableau de bord (M5)}
+
+\noindent
+Four entities manage dashboard configuration:
+
+\begin{itemize}
+  \item \textbf{Dashboard} — defines a dashboard layout
+        with grid columns (default 12),
+        refresh interval, default filters,
+        access control (public, allowed roles, allowed users),
+        and view count tracking.
+  \item \textbf{Widget} — individual dashboard component
+        with type (metric card, line chart, bar chart,
+        pie chart, table, gauge, scatter plot, heatmap),
+        position (x, y), dimensions (width, height),
+        data source reference, and drill-down capability.
+  \item \textbf{Visualization} — reusable chart template
+        with axis configuration, grouping, filtering,
+        aggregation methods, style configuration,
+        and usage tracking.
+  \item \textbf{PreferenceUtilisateur} — per-user settings:
+        visible columns, KPI order, dashboard layout,
+        default period, currency (FCFA), number format
+        (French/English).
+  \item \textbf{VuePersonnalisee} — user-saved dashboard
+        configurations (maximum 20 per user),
+        with default and shared flags.
+\end{itemize}
+
+% --- 3.4.7 Intelligence artificielle ---
+\subsection{Modules d'Intelligence Artificielle (M6/M7/M8)}
+
+\noindent
+Three entities manage AI-powered features:
+
+\begin{itemize}
+  \item \textbf{AIAnalysis} — records an AI analysis session:
+        model provider, model name, prompt, context data,
+        response, token usage, processing time,
+        cost, and status.
+  \item \textbf{AIInsight} — individual findings extracted
+        from an analysis: type (trend, anomaly, pattern,
+        correlation, recommendation, warning, opportunity),
+        severity, supporting data, statistical significance,
+        recommended action, estimated impact, and urgency.
+  \item \textbf{AnomalyModel} / \textbf{Anomaly} /
+        \textbf{AnomalyAlert} — ML model registry
+        and detected anomaly records with contribution scores,
+        severity classification, and multi-channel alerts.
+\end{itemize}
+
+% --- 3.4.8 Chatbot ---
+\subsection{Module Chatbot (M8)}
+
+\noindent
+Three entities support conversational interaction:
+
+\begin{itemize}
+  \item \textbf{ChatSession} — represents a conversation
+        with a title and status (active/archived).
+  \item \textbf{ChatMessage} — individual messages
+        within a session, with role (user/assistant),
+        content, and intent metadata.
+  \item \textbf{QueryHistory} — analytics on user queries:
+        intent, entities, sentiment, execution time,
+        and satisfaction score.
+\end{itemize}
+
+
+% ============================================================
+\section{Schéma de la Base de Données — Diagramme Entité-Relation}
+% ============================================================
+
+\noindent
+Figure~\ref{fig:erd} presents a simplified
+entity-relationship diagram of the platform.
+The 27 tables are organised into five clusters
+围绕 the central DataSource entity.
+
+\begin{figure}[h!]
+\centering
+\fbox{\parbox{0.92\textwidth}{\centering
+\vspace{0.5cm}
+\textbf{Diagramme Entité-Relation — Vue synthétique}
+
+\vspace{0.3cm}
+\small
+
+\textsc{Authentification}
+\begin{tabular}{|l|l|l|}
+\hline
+Organization & $\leftarrow$ created\_by -- User & \\
+UserProfile & $\leftrightarrow$ User (1:1) & \\
+UserProfile & $\rightarrow$ Organization (N:1) & \\
+AuthToken & $\rightarrow$ User (N:1) & \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\textsc{Pipeline de Données}
+
+\begin{tabular}{|l|l|l|}
+\hline
+DataSource & $\leftarrow$ uploaded\_by -- User & \\
+RawData & $\rightarrow$ DataSource (N:1) & \\
+CleaningJob & $\rightarrow$ DataSource (N:1) & \\
+CleaningJob & $\rightarrow$ CleaningRule (N:1) & \\
+CleanedData & $\rightarrow$ CleaningJob (N:1) & \\
+CleanedData & $\rightarrow$ RawData (N:1) & \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\textsc{Conflits \& Résolution}
+
+\begin{tabular}{|l|l|l|}
+\hline
+Conflict & $\rightarrow$ DataSource (N:1) & \\
+Conflict & $\rightarrow$ ConflictType (N:1) & \\
+ConflictResolution & $\rightarrow$ Conflict (N:1) & \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\textsc{Analyse}
+
+\begin{tabular}{|l|l|l|}
+\hline
+KPI & $\leftarrow$ owner -- User & \\
+KPICalculation & $\rightarrow$ KPI (N:1) & \\
+KPIAlert & $\rightarrow$ KPI (N:1) & \\
+Widget & $\rightarrow$ Dashboard (N:1) & \\
+Dashboard & $\leftarrow$ created\_by -- User & \\
+AIAnalysis & $\rightarrow$ DataSource (N:1) & \\
+AIAnalysis & $\rightarrow$ KPI (N:1) & \\
+AIInsight & $\rightarrow$ AIAnalysis (N:1) & \\
+Anomaly & $\rightarrow$ AnomalyModel (N:1) & \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\textsc{Chatbot}
+
+\begin{tabular}{|l|l|l|}
+\hline
+ChatMessage & $\rightarrow$ ChatSession (N:1) & \\
+QueryHistory & $\rightarrow$ ChatSession (N:1) & \\
+\hline
+\end{tabular}
+
+\vspace{0.5cm}
+}}
+\caption{Diagramme Entité-Relation simplifié (27 tables).}
+\label{fig:erd}
+\end{figure}
+
+
+% ============================================================
+\section{Modélisation des Classes}
+% ============================================================
+
+\noindent
+At the implementation level, the backend follows
+a consistent class structure per module.
+Figure~\ref{fig:classes} presents the principal classes
+and their relationships.
+
+\begin{figure}[h!]
+\centering
+\fbox{\parbox{0.92\textwidth}{\centering
+\vspace{0.5cm}
+\textbf{Diagramme de Classes — Structure orientée objet}
+
+\vspace{0.3cm}
+\small
+
+\texttt{[Service Layer]}
+
+\begin{tabular}{|l|l|}
+\hline
+\texttt{KPICalculationService} & Calcule les KPI (SQL/Python/Excel) \\
+\texttt{KPIAnomalyDetectionService} & Détecte les anomalies (Z-score, Isolation Forest, IQR) \\
+\texttt{KPIForecastingService} & Prévisions par régression linéaire \\
+\texttt{KPIAlertingService} & Envoie les alertes (email, webhook, Slack) \\
+\texttt{FilterService} & Aliasage bilingue des champs (FR/EN) \\
+\texttt{PivotService} & Tables croisées dynamiques \\
+\texttt{NotificationService} & Notifications en 5 étapes \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\texttt{[Nettoyage — Services de nettoyage]}
+
+\begin{tabular}{|l|l|}
+\hline
+\texttt{StructuralCleaner} & Nettoyage structurel (colonnes, lignes) \\
+\texttt{DateCleaner} & Parsing et normalisation des dates \\
+\texttt{MontantCleaner} & Normalisation des montants \\
+\texttt{TextCleaner} & Nettoyage du texte (standardisation) \\
+\texttt{CoherenceChecker} & Vérification de cohérence \\
+\texttt{ContextChecker} & Vérification contextuelle \\
+\texttt{QualityScorer} & Calcul du score de qualité \\
+\texttt{MLCleaner} & Profilage ML optionnel \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\texttt{[API Layer] — Vues Django REST Framework}
+
+\begin{tabular}{|l|l|}
+\hline
+\texttt{DataSourceUploadView} & Upload de fichiers \\
+\texttt{CleaningApplyAsyncView} & Nettoyage asynchrone \\
+\texttt{ConflictDetectionAPIView} & Détection de conflits \\
+\texttt{KPIEngineAPIView} & Calcul de KPI \\
+\texttt{PivotTableView} & Tables pivot \\
+\texttt{InterpretKpisView} & Interprétation IA \\
+\texttt{IsolationForestRunView} & Détection d'anomalies \\
+\texttt{ChatSessionMessageListCreateView} & Chatbot \\
+\hline
+\end{tabular}
+
+\vspace{0.5cm}
+}}
+\caption{Diagramme de classes — couches applicatives.}
+\label{fig:classes}
+\end{figure}
+
+
+% ============================================================
+\section{Modélisation des Interactions — Diagrammes de Séquence}
+% ============================================================
+
+\noindent
+This section presents the sequence diagrams
+for the three most critical workflows.
+
+% --- 3.7.1 Flux d'import ---
+\subsection{Flux d'Import de Données}
+
+\noindent
+The data import workflow involves five participants:
+the User (analyst or admin), the Frontend,
+the API, the Celery Worker, and the Database.
+
+\begin{enumerate}
+  \item The user selects a file and clicks \textit{Importer}.
+  \item The frontend sends a POST request to
+        \texttt{/api/ingestion/sources/async-upload/}
+        with the file and metadata.
+  \item The API validates the file format and size,
+        creates a DataSource record with status
+        \textit{pending}, and enqueues a Celery task.
+  \item The API returns a job ID immediately
+        (HTTP 202 Accepted).
+  \item The Celery worker picks up the task,
+        updates the DataSource status to
+        \textit{processing}, parses the file,
+        and inserts rows into the RawData table.
+  \item On completion, the worker updates the status
+        to \textit{completed} and fires a Django signal.
+  \item The signal handler creates a notification
+        (\textit{ingestion\_completed}) and,
+        if auto-cleaning is enabled, enqueues
+        a cleaning task.
+  \item The frontend polls \texttt{/api/ingestion/jobs/<id>/}
+        every 3 seconds and updates the UI
+        with progress information.
+\end{enumerate}
+
+% --- 3.7.2 Flux de nettoyage ---
+\subsection{Flux de Nettoyage Automatisé}
+
+\noindent
+The cleaning workflow is triggered automatically
+after ingestion or manually by the user:
+
+\begin{enumerate}
+  \item A cleaning task is enqueued
+        (either by signal after ingestion or by
+        a POST to \texttt{/api/nettoyage/sources/<id>/apply-async/}).
+  \item The Celery worker loads the raw data
+        and the cleaning pipeline.
+  \item Each rule in the pipeline is applied sequentially:
+        structural cleaning, date parsing,
+        amount normalisation, text standardisation,
+        coherence checking.
+  \item Quality scores are computed at each step.
+  \item Results are stored in the CleanedData table
+        with a before/after comparison.
+  \item A cleaning job record tracks rows processed,
+        affected, and skipped.
+  \item The user reviews the comparison
+        via \texttt{/api/nettoyage/jobs/<id>/comparison/}
+        and either validates or rejects the results.
+  \item Validation triggers a signal that enqueues
+        conflict detection (M3).
+\end{enumerate}
+
+% --- 3.7.3 Flux de calcul de KPI ---
+\subsection{Flux de Calcul de KPI}
+
+\noindent
+KPI calculation is event-driven:
+
+\begin{enumerate}
+  \item A data change event fires
+        (after cleaning validation or conflict resolution).
+  \item The event handler queries all active KPIs
+        whose source matches the changed data.
+  \item For each KPI, the KPICalculationService
+        evaluates the formula:
+        \begin{itemize}
+          \item SQL formulas are executed
+                against the database.
+          \item Python formulas are evaluated
+                in a sandboxed environment.
+          \item Excel formulas are parsed
+                and computed locally.
+        \end{itemize}
+  \item The calculated value is compared against
+        the target, previous period, and thresholds.
+  \item A KPICalculation record is created
+        with variance analysis and status classification.
+  \item If a threshold is breached,
+        the KPIAlertingService is invoked:
+        it checks cooldown periods,
+        selects notification channels,
+        and dispatches alerts.
+  \item Anomaly detection runs concurrently:
+        Z-score analysis flags values
+        exceeding 2.5 standard deviations,
+        and the Isolation Forest model
+        identifies multivariate outliers.
+  \item Results are pushed to the frontend
+        via the dashboard API
+        (\texttt{/api/kpi/dashboard/}).
+\end{enumerate}
+
+
+% ============================================================
+\section{Conception de l'API REST}
+% ============================================================
+
+\noindent
+The platform exposes a RESTful API
+organised under the \texttt{/api/} prefix.
+Table~\ref{tab:api} summarises the endpoint structure
+by module.
+
+\begin{table}[h!]
+\centering
+\caption{Structure de l'API REST.}
+\label{tab:api}
+\small
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Module} & \textbf{Préfixe} & \textbf{Endpoints principaux} \\
+\hline
+Auth (M9) & \texttt{/api/auth/} & register, login, logout, \\
+& & token, profile, admin/users, \\
+& & password-reset, notifications \\
+\hline
+Ingestion (M1) & \texttt{/api/ingestion/} & sources, upload, async-upload, \\
+& & preview, templates, jobs, raw-data \\
+\hline
+Nettoyage (M2) & \texttt{/api/nettoyage/} & rules, pipelines, jobs, \\
+& & suggestions, preview, apply, \\
+& & apply-async, comparison, validate \\
+\hline
+Conflits (M3) & \texttt{/api/conflits/} & types, conflicts, resolutions, \\
+& & activity-log, detect \\
+\hline
+KPI (M4/M5) & \texttt{/api/kpi/} & kpis, auto/detect, calculate\_now, \\
+& & history, anomaly\_detection, \\
+& & forecast, variance\_analysis, \\
+& & alerts, workbench/pivot, \\
+& & workbench/metric, filtres-disponibles \\
+\hline
+Dashboard (M5) & \texttt{/api/dashboard/} & dashboards, widgets, preferences, \\
+& & vues, auto-build, add-widget, \\
+& & analytics, preview \\
+\hline
+IA (M6) & \texttt{/api/ia/} & interpret-kpis, history, \\
+& & sources/<id>/kpis \\
+\hline
+Anomalies (M7) & \texttt{/api/anomalies/} & detections, ml-models, \\
+& & isolation\_forest/run \\
+\hline
+Chatbot (M8) & \texttt{/api/chatbot/} & sessions, messages \\
+\hline
+\end{tabular}
+\end{table}
+
+\noindent
+All endpoints follow DRF conventions:
+\texttt{GET} for listing/detail,
+\texttt{POST} for creation,
+\texttt{PUT/PATCH} for updates,
+\texttt{DELETE} for removal.
+Responses are paginated by default (20 items per page).
+Errors return structured JSON with \texttt{detail}
+and optional \texttt{errors} fields.
+
+
+% ============================================================
+\section{Modèle de Sécurité}
+% ============================================================
+
+\noindent
+Security is designed at three layers,
+as illustrated in Figure~\ref{fig:security}.
+
+\begin{figure}[h!]
+\centering
+\fbox{\parbox{0.85\textwidth}{\centering
+\vspace{0.5cm}
+\textbf{Modèle de Sécurité — Trois couches}
+
+\vspace{0.3cm}
+\small
+
+\textbf{Couche 1 : Authentification}
+\begin{tabular}{|l|l|}
+\hline
+JWT Access Token & Valide 60 minutes \\
+JWT Refresh Token & Valide 7 jours, rotation activée \\
+API Token & SHA-256 hash, whiteliste IP, rate limit \\
+Verrouillage & 5 tentatives échouées $\rightarrow$ 15 min \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\textbf{Couche 2 : Autorisation (RBAC)}
+\begin{tabular}{|l|c|c|c|}
+\hline
+Capacité & Admin & Analyste & Viewer \\
+\hline
+Lire le tableau de bord & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+Lire les KPI & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+Importer des données & $\checkmark$ & $\checkmark$ & $\times$ \\
+Créer des KPI & $\checkmark$ & $\checkmark$ & $\times$ \\
+Gérer les utilisateurs & $\checkmark$ & $\times$ & $\times$ \\
+Utiliser le chatbot & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+\hline
+\end{tabular}
+
+\vspace{0.3cm}
+\textbf{Couche 3 : Isolation des Données}
+\begin{tabular}{|l|}
+\hline
+Multi-tenant : chaque organisation ne voit que ses données \\
+Requêtes SQL paramétrées (pas d'injection possible) \\
+Sandbox Python pour les formules KPI \\
+Hachage bcrypt des mots de passe \\
+Hash SHA-256 des tokens API \\
+\hline
+\end{tabular}
+
+\vspace{0.5cm}
+}}
+\caption{Modèle de sécurité à trois couches.}
+\label{fig:security}
+\end{figure}
+
+
+% ============================================================
+\section{Modèle de Déploiement}
+% ============================================================
+
+\noindent
+The deployment architecture separates the frontend
+and backend into independent scaling domains:
+
+\begin{itemize}
+  \item \textbf{Frontend:} static assets served by
+        Cloudflare Workers (serverless edge),
+        providing global low-latency access.
+        Built with Vite, served as a single-page application.
+  \item \textbf{Backend:} Django application server
+        behind a reverse proxy,
+        with PostgreSQL and Redis on the same machine
+        or nearby network.
+  \item \textbf{Workers:} Celery processes running
+        as systemd services,
+        handling ingestion, cleaning, conflict detection,
+        KPI calculation, and anomaly detection.
+  \item \textbf{Communication:} the frontend proxies
+        \texttt{/api} requests to the backend
+        in development; in production,
+        API calls go directly to the backend's
+        public URL via \texttt{VITE\_API\_BASE\_URL}.
+\end{itemize}
+
+\noindent
+This architecture is deliberately simple.
+It avoids container orchestration (Kubernetes),
+service meshes, and other infrastructure complexity
+that would be disproportionate to the project's scale.
+A single server running Django, PostgreSQL, Redis,
+and Celery workers is sufficient for the initial deployment,
+with the option to scale horizontally
+by adding worker processes or database replicas
+if demand grows.
+
+
+% ============================================================
+\section{Résumé du Chapitre}
+% ============================================================
+
+\noindent
+This chapter has presented the complete design
+of the DecisioBI platform.
+Ten functional requirements were derived from the gaps
+identified in Chapter~1,
+and six non-functional requirements
+were established to ensure quality.
+The data model comprises 27 tables
+organised into 10 modules,
+with a central DataSource entity
+connecting ingestion, cleaning, conflict resolution,
+KPI calculation, and AI analysis.
+The API exposes 70+ endpoints
+following REST conventions with JWT authentication
+and role-based access control.
+Three critical workflows — import, cleaning,
+and KPI calculation — were modelled as sequence diagrams
+to verify that the design supports
+the required user interactions.
+The deployment architecture is intentionally minimal,
+prioritising simplicity and reliability
+over infrastructure sophistication.
+
+\vspace{0.4cm}
+\noindent
+The next chapter presents the implementation itself,
+showing how these design decisions
+translate into working code,
+validated by a comprehensive test suite.
+
+\vspace{0.7cm}
+\begin{center}
+  \textcolor{BITred!40}{\rule{0.35\linewidth}{0.5pt}}
+  \hspace{0.5em}
+  \textcolor{BITred}{$\star$}
+  \hspace{0.5em}
+  \textcolor{BITred!40}{\rule{0.35\linewidth}{0.5pt}}
+\end{center}
