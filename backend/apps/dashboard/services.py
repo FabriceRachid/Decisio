@@ -435,6 +435,10 @@ def auto_build_dashboard(user: User, source_id: int, period_start: date | None =
         'treemap': {'width': 4, 'height': 4},
     }
 
+    # Check if source has sheet relations → use rawdata with joined view
+    has_relations = source.sheet_relations.filter(is_active=True).exists()
+    source_table = 'ingestion_rawdata' if has_relations else 'nettoyage_cleaneddata'
+
     for i, wdef in enumerate(widget_defs):
         title = wdef['title']
         group_by = wdef.get('group_by')
@@ -444,11 +448,13 @@ def auto_build_dashboard(user: User, source_id: int, period_start: date | None =
             'measure': wdef['measure'],
             'aggregation': wdef['aggregation'],
             'group_by': [group_by] if group_by else [],
-            'source_table': 'nettoyage_cleaneddata',
+            'source_table': source_table,
             'source_id': source.id,
             'auto_generated': True,
             'semantic_type': wdef.get('semantic_type', 'other'),
         }
+        if has_relations:
+            config['use_joined_view'] = True
         if period_start:
             config['period_start'] = period_start.isoformat()
         if period_end:

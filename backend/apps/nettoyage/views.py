@@ -6,6 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 import logging
 
 from apps.authentication.permissions import CanReadData, CanWriteData
+from apps.conflits.audit import log_activity
 from apps.ingestion.models import DataSource, RawData
 from apps.nettoyage.models import CleaningPipeline, CleaningRule, CleaningJob
 from apps.nettoyage.serializers import (
@@ -22,6 +23,7 @@ from apps.nettoyage.serializers import (
 from apps.nettoyage.services import (
     CleaningError,
     apply_cleaning,
+    apply_cleaning_multi_sheet,
     get_cleaning_job_detail,
     preview_cleaning,
     replay_cleaning,
@@ -98,7 +100,16 @@ class CleaningRuleListCreateView(generics.ListCreateAPIView):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        log_activity(
+            action_type='create',
+            resource_type='CleaningRule',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_201_CREATED,
+        )
 
 
 class CleaningRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -129,6 +140,16 @@ class CleaningRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+
+        log_activity(
+            action_type='update',
+            resource_type='CleaningRule',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=request.user,
+            request=request,
+            status_code=status.HTTP_200_OK,
+        )
         
         return Response(CleaningRuleSerializer(instance).data, status=status.HTTP_200_OK)
     
@@ -137,6 +158,16 @@ class CleaningRuleDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance = self.get_object()
         instance.is_active = False
         instance.save(update_fields=['is_active', 'updated_at'])
+
+        log_activity(
+            action_type='delete',
+            resource_type='CleaningRule',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=request.user,
+            request=request,
+            status_code=status.HTTP_204_NO_CONTENT,
+        )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -164,7 +195,16 @@ class CleaningPipelineListCreateView(generics.ListCreateAPIView):
         return [permission() for permission in self.permission_classes]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        log_activity(
+            action_type='create',
+            resource_type='CleaningPipeline',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_201_CREATED,
+        )
 
 
 class CleaningPipelineDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -177,6 +217,30 @@ class CleaningPipelineDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ['PUT', 'PATCH', 'DELETE']:
             return [CanWriteData()]
         return [permission() for permission in self.permission_classes]
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_activity(
+            action_type='update',
+            resource_type='CleaningPipeline',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_200_OK,
+        )
+
+    def perform_destroy(self, instance):
+        log_activity(
+            action_type='delete',
+            resource_type='CleaningPipeline',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_204_NO_CONTENT,
+        )
+        instance.delete()
 
 
 class CleaningPreviewView(APIView):
@@ -219,16 +283,29 @@ class CleaningApplyView(APIView):
         serializer.is_valid(raise_exception=True)
         source = _get_accessible_source(request, source_id)
 
+        has_sheets = source.sheets.exists()
+
         try:
-            result = apply_cleaning(
-                source=source,
-                user=request.user,
-                pipeline_id=serializer.validated_data.get('pipeline_id'),
-                rule_ids=serializer.validated_data['rule_ids'],
-                include_all_auto_rules=serializer.validated_data['include_all_auto_rules'],
-                quality_gate=serializer.validated_data.get('quality_gate', {}),
-                decision_overrides=serializer.validated_data.get('decision_overrides', []),
-            )
+            if has_sheets:
+                result = apply_cleaning_multi_sheet(
+                    source=source,
+                    user=request.user,
+                    pipeline_id=serializer.validated_data.get('pipeline_id'),
+                    rule_ids=serializer.validated_data['rule_ids'],
+                    include_all_auto_rules=serializer.validated_data['include_all_auto_rules'],
+                    quality_gate=serializer.validated_data.get('quality_gate', {}),
+                    decision_overrides=serializer.validated_data.get('decision_overrides', []),
+                )
+            else:
+                result = apply_cleaning(
+                    source=source,
+                    user=request.user,
+                    pipeline_id=serializer.validated_data.get('pipeline_id'),
+                    rule_ids=serializer.validated_data['rule_ids'],
+                    include_all_auto_rules=serializer.validated_data['include_all_auto_rules'],
+                    quality_gate=serializer.validated_data.get('quality_gate', {}),
+                    decision_overrides=serializer.validated_data.get('decision_overrides', []),
+                )
         except CleaningError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception:
@@ -237,6 +314,17 @@ class CleaningApplyView(APIView):
                 {'error': 'Une erreur inattendue est survenue pendant l application du nettoyage.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        log_activity(
+            action_type='update',
+            resource_type='DataSource',
+            resource_id=source.id,
+            resource_name=source.name,
+            user=request.user,
+            request=request,
+            details={'action': 'cleaning_applied'},
+            status_code=status.HTTP_201_CREATED,
+        )
 
         return Response(result, status=status.HTTP_201_CREATED)
 
@@ -268,69 +356,54 @@ class CleaningApplyAsyncView(APIView):
             execution_context=execution_context,
         )
 
-        # Queue async task (with sync fallback if broker is unavailable).
+        # Always run synchronously — Celery worker is not running.
         try:
-            apply_cleaning_async.delay(
-                job_id=job.id,
-                source_id=source_id,
-                user_id=request.user.id,
+            sync_result = apply_cleaning(
+                source=source,
+                user=request.user,
                 pipeline_id=execution_context['pipeline_id'],
                 rule_ids=execution_context['rule_ids'],
                 include_all_auto_rules=execution_context['include_all_auto_rules'],
                 quality_gate=execution_context['quality_gate'],
                 decision_overrides=execution_context.get('decision_overrides', []),
             )
-        except Exception as exc:
-            logger.exception('Failed to enqueue cleaning job #%s, falling back to sync mode.', job.id)
-
-            try:
-                sync_result = apply_cleaning(
-                    source=source,
-                    user=request.user,
-                    pipeline_id=execution_context['pipeline_id'],
-                    rule_ids=execution_context['rule_ids'],
-                    include_all_auto_rules=execution_context['include_all_auto_rules'],
-                    quality_gate=execution_context['quality_gate'],
-                    decision_overrides=execution_context.get('decision_overrides', []),
-                )
-            except CleaningError as cleaning_exc:
-                job.status = 'failed'
-                job.error_message = str(cleaning_exc)
-                job.save(update_fields=['status', 'error_message'])
-                return Response({'error': str(cleaning_exc)}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception:
-                logger.exception('Unexpected sync fallback failure for cleaning job #%s.', job.id)
-                job.status = 'failed'
-                job.error_message = 'Une erreur inattendue est survenue pendant le nettoyage.'
-                job.save(update_fields=['status', 'error_message'])
-                return Response(
-                    {'error': 'Une erreur inattendue est survenue pendant le nettoyage.'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            job.status = 'completed'
-            job.progress_percent = 100
-            job.rows_processed = sync_result['summary']['rows_processed']
-            job.rows_affected = sync_result['summary']['rows_affected']
-            job.rows_skipped = sync_result['summary']['rows_skipped']
-            job.rows_failed = sync_result['summary']['rows_failed']
-            job.execution_context = {
-                **execution_context,
-                'fallback_mode': 'sync',
-                'enqueue_error': str(exc),
-                'result_job_id': sync_result['job_id'],
-            }
-            job.save(
-                update_fields=[
-                    'status',
-                    'progress_percent',
-                    'rows_processed',
-                    'rows_affected',
-                    'rows_skipped',
-                    'rows_failed',
-                    'execution_context',
-                ]
+        except CleaningError as cleaning_exc:
+            job.status = 'failed'
+            job.error_message = str(cleaning_exc)
+            job.save(update_fields=['status', 'error_message'])
+            return Response({'error': str(cleaning_exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Unexpected sync failure for cleaning job #%s.', job.id)
+            job.status = 'failed'
+            job.error_message = 'Une erreur inattendue est survenue pendant le nettoyage.'
+            job.save(update_fields=['status', 'error_message'])
+            return Response(
+                {'error': 'Une erreur inattendue est survenue pendant le nettoyage.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        job.status = 'completed'
+        job.progress_percent = 100
+        job.rows_processed = sync_result['summary']['rows_processed']
+        job.rows_affected = sync_result['summary']['rows_affected']
+        job.rows_skipped = sync_result['summary']['rows_skipped']
+        job.rows_failed = sync_result['summary']['rows_failed']
+        job.execution_context = {
+            **execution_context,
+            'fallback_mode': 'sync',
+            'result_job_id': sync_result['job_id'],
+        }
+        job.save(
+            update_fields=[
+                'status',
+                'progress_percent',
+                'rows_processed',
+                'rows_affected',
+                'rows_skipped',
+                'rows_failed',
+                'execution_context',
+            ]
+        )
 
         return Response(CleaningJobListSerializer(job).data, status=status.HTTP_202_ACCEPTED)
 
@@ -400,6 +473,16 @@ class CleaningJobValidationView(APIView):
             user=request.user,
             is_validated=serializer.validated_data['is_validated'],
             validation_notes=serializer.validated_data['validation_notes'],
+        )
+        log_activity(
+            action_type='update',
+            resource_type='CleaningJob',
+            resource_id=job.id,
+            resource_name=f'CleaningJob #{job.id}',
+            user=request.user,
+            request=request,
+            details={'action': 'cleaning_validated'},
+            status_code=status.HTTP_200_OK,
         )
         return Response(result, status=status.HTTP_200_OK)
 

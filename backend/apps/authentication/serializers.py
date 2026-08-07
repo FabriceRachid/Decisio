@@ -16,12 +16,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
     role_display = serializers.CharField(source='get_role_display', read_only=True)
     organization_id = serializers.IntegerField(source='organization.id', read_only=True)
     organization_name = serializers.CharField(source='organization.name', read_only=True)
-    
+    organization_logo = serializers.SerializerMethodField()
+    organization_brand_color = serializers.CharField(source='organization.brand_color', read_only=True)
+
     class Meta:
         model = UserProfile
         fields = [
-            'id', 'role', 'role_display', 'organization_id', 'organization_name', 'department', 
-            'phone_number', 'avatar_url', 'timezone', 'language',
+            'id', 'role', 'role_display', 'organization_id', 'organization_name',
+            'organization_logo', 'organization_brand_color',
+            'department', 'phone_number', 'avatar_url', 'timezone', 'language',
             'mfa_enabled', 'is_email_verified', 'last_password_change',
             'failed_login_attempts', 'locked_until', 'password_expires_at'
         ]
@@ -29,6 +32,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'id', 'role', 'role_display', 'is_email_verified', 'last_password_change',
             'failed_login_attempts', 'locked_until', 'password_expires_at'
         ]
+
+    def get_organization_logo(self, obj):
+        org = obj.organization
+        if org and org.logo:
+            request = self.context.get('request')
+            url = org.logo.url
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+        return None
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -69,6 +82,28 @@ class AdminUserProfileSerializer(UserProfileSerializer):
             'is_email_verified', 'last_password_change',
             'failed_login_attempts', 'locked_until', 'password_expires_at'
         ]
+
+
+class OrganizationSerializer(serializers.ModelSerializer):
+    """Serialize Organization branding for the current tenant."""
+
+    logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Organization
+        fields = [
+            'id', 'name', 'sector', 'size', 'country',
+            'logo', 'logo_url', 'brand_color',
+        ]
+
+    def get_logo_url(self, obj):
+        if obj.logo:
+            request = self.context.get('request')
+            url = obj.logo.url
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+        return None
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):

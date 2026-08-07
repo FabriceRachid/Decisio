@@ -262,3 +262,8 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 300.0,  # Every 5 minutes
     },
 }
+
+# ==================== STRUCTURE DETECTION (M2 Enhancement) ====================
+STRUCTURE_DETECTION_CONFIDENCE_THRESHOLD = float(os.getenv('STRUCTURE_DETECTION_CONFIDENCE_THRESHOLD', '0.8'))
+STRUCTURE_DETECTION_LLM_MODEL = os.getenv('STRUCTURE_DETECTION_LLM_MODEL', 'llama-3.3-70b-versatile')
+STRUCTURE_DETECTION_EMBEDDING_MODEL = os.getenv('STRUCTURE_DETECTION_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')

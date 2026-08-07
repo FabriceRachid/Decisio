@@ -144,6 +144,7 @@ def run_isolation_forest(
 
     details: List[Dict[str, Any]] = []
     outlier_rows: List[int] = []
+    outlier_indices: List[int] = []
     for i in range(n_samples):
         is_out = pred[i] == -1
         details.append(
@@ -155,6 +156,45 @@ def run_isolation_forest(
         )
         if is_out:
             outlier_rows.append(row_numbers[i])
+            outlier_indices.append(i)
+
+    # Calculer la mediane de chaque colonne pour comparer les outliers
+    col_medians: Dict[str, float] = {}
+    for j, col in enumerate(feature_columns):
+        vals = X[:, j]
+        masked = vals[~np.isnan(vals)]
+        if len(masked):
+            col_medians[col] = float(np.median(masked))
+
+    # Pour chaque outlier, trouver les colonnes qui devient le plus
+    outlier_details: List[Dict[str, Any]] = []
+    for idx in outlier_indices:
+        row_data = rows[idx].get("data", {}) if isinstance(rows[idx].get("data"), dict) else {}
+        deviations = []
+        for j, col in enumerate(feature_columns):
+            median = col_medians.get(col)
+            if median is None or median == 0:
+                continue
+            raw_val = row_data.get(col)
+            try:
+                fval = float(raw_val)
+                ratio = fval / median
+                if ratio > 2.5 or ratio < 0.4:
+                    deviations.append({
+                        "column": col,
+                        "valeur": fval,
+                        "mediane": round(median, 2),
+                        "ratio": round(ratio, 1),
+                        "direction": "supérieur" if ratio > 2.5 else "inférieur",
+                        "label": f"{col}={fval} (valeur habituelle={round(median, 2)})",
+                    })
+            except (TypeError, ValueError):
+                pass
+        deviations.sort(key=lambda d: abs(d["ratio"]), reverse=True)
+        outlier_details.append({
+            "row_number": row_numbers[idx],
+            "deviations": deviations[:3],
+        })
 
     return {
         "source_id": source.id,
@@ -167,6 +207,8 @@ def run_isolation_forest(
         "contamination_effective": eff_contamination,
         "outlier_count": len(outlier_rows),
         "outlier_row_numbers": outlier_rows,
+        "col_medians": col_medians,
+        "outlier_details": outlier_details,
         "rows": details,
     }
 
@@ -229,10 +271,31 @@ def persist_detection_run(
     else:
         severity = "critical"
 
+    outlier_details = payload.get("outlier_details", [])
+    pct = round(len(outlier_rows) / max(payload['n_samples'], 1) * 100, 1)
+
+    # Construire des exemples concrets: "le montant (50 000) est plus eleve que d'habitude (320)"
+    examples: List[str] = []
+    for od in outlier_details[:2]:
+        devs = od.get("deviations", [])
+        if devs:
+            sentence_parts = [f"ligne #{od['row_number']} :"]
+            for d in devs[:2]:
+                dir_word = "plus eleve" if d["direction"] == "supérieur" else "plus faible"
+                sentence_parts.append(
+                    f"le {d['column']} ({d['valeur']}) est {dir_word} que d'habitude ({d['mediane']})"
+                )
+            examples.append(", ".join(sentence_parts))
+
+    if examples:
+        example_text = "\nPar exemple :\n- " + "\n- ".join(examples)
+    else:
+        example_text = ""
+
     explanation = (
-        f"Isolation Forest ({payload['backend']}) sur {payload['n_samples']} lignes et "
-        f"{len(feat)} variables. {len(outlier_rows)} ligne(s) marquee(s) comme atypiques "
-        f"(contamination effective {payload['contamination_effective']:.4f})."
+        f"{len(outlier_rows)} ligne(s) sur {payload['n_samples']} ont des valeurs anormales."
+        f"{example_text}\n"
+        f"Ces ecarts peuvent etre une erreur de saisie, un cas exceptionnel ou un signal a surveiller."
     )
 
     anomaly = Anomaly.objects.create(

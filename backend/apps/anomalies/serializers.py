@@ -70,6 +70,16 @@ class AnomalyDetailSerializer(AnomalyListSerializer):
         ]
 
 
+class AnomalyStatusUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Anomaly
+        fields = [
+            "status",
+            "is_reviewed",
+            "review_notes",
+        ]
+
+
 class AnomalyModelListSerializer(serializers.ModelSerializer):
     training_source_name = serializers.CharField(source="training_source.name", read_only=True, allow_null=True)
 

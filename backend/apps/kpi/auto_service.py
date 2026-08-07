@@ -94,7 +94,17 @@ class KPIAutoService:
                 return job
         return None
 
-    def _load_validated_frame(self, source: DataSource) -> tuple[pd.DataFrame, CleaningJob]:
+    def _load_validated_frame(self, source: DataSource) -> tuple[pd.DataFrame, CleaningJob | None]:
+        # Check if source has sheet relations → use joined view
+        if source.sheet_relations.filter(is_active=True).exists():
+            from apps.ingestion.services import build_joined_view
+            result = build_joined_view(source)
+            rows = result.get('rows', [])
+            frame = pd.DataFrame(rows)
+            if frame.empty:
+                raise ValueError("Aucune donnée jointe n'est disponible pour cette source.")
+            return frame, None
+
         job = self._latest_validated_job(source)
         if job is None:
             raise ValueError("Cette source ne possède pas de nettoyage validé exploitable pour M4.")

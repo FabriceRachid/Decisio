@@ -37,6 +37,7 @@ from apps.kpi.services import (
 )
 from apps.kpi.auto_service import KPIAutoService
 from apps.authentication.permissions import CanReadData, CanWriteData, HasSourceAccess
+from apps.conflits.audit import log_activity
 from apps.ingestion.models import DataSource
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,40 @@ class KPIViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set owner to current user when creating KPI."""
-        serializer.save(owner=self.request.user)
+        instance = serializer.save(owner=self.request.user)
+        log_activity(
+            action_type='create',
+            resource_type='KPI',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_activity(
+            action_type='update',
+            resource_type='KPI',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_200_OK,
+        )
+
+    def perform_destroy(self, instance):
+        log_activity(
+            action_type='delete',
+            resource_type='KPI',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_204_NO_CONTENT,
+        )
+        instance.delete()
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, CanWriteData])
     def calculate_now(self, request, pk=None):
@@ -487,7 +521,40 @@ class KPIAlertViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set creator when creating alert."""
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        log_activity(
+            action_type='create',
+            resource_type='KPIAlert',
+            resource_id=instance.id,
+            resource_name=instance.name if hasattr(instance, 'name') else f'KPIAlert #{instance.id}',
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_activity(
+            action_type='update',
+            resource_type='KPIAlert',
+            resource_id=instance.id,
+            resource_name=instance.name if hasattr(instance, 'name') else f'KPIAlert #{instance.id}',
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_200_OK,
+        )
+
+    def perform_destroy(self, instance):
+        log_activity(
+            action_type='delete',
+            resource_type='KPIAlert',
+            resource_id=instance.id,
+            resource_name=instance.name if hasattr(instance, 'name') else f'KPIAlert #{instance.id}',
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_204_NO_CONTENT,
+        )
+        instance.delete()
     
     @action(detail=True, methods=['post'])
     def acknowledge(self, request, pk=None):

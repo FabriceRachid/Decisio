@@ -1,6 +1,13 @@
 from django.db import models
 from django.contrib.auth.models import User
 
+# Import structural reconstruction models
+from apps.nettoyage.structure_models import (  # noqa: F401
+    RawStructuralSnapshot,
+    CorrectionExample,
+    CleaningRun,
+)
+
 
 class CleaningRule(models.Model):
     """
@@ -26,6 +33,11 @@ class CleaningRule(models.Model):
         ('split_column', 'Split Column'),
         ('merge_columns', 'Merge Columns'),
         ('validate_format', 'Validate Format'),
+        ('extract_labeled_fields', 'Extract Labeled Fields from Text'),
+        ('fix_ambiguous_chars', 'Fix Ambiguous Characters'),
+        ('split_value_unit', 'Split Value and Unit'),
+        ('explode_delimited_list', 'Explode Delimited List'),
+        ('unpivot', 'Unpivot / Melt Crosstab'),
     ]
     
     name = models.CharField(max_length=200)

@@ -19,6 +19,7 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from rest_framework import generics, status, permissions
+from rest_framework.exceptions import NotFound
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -37,9 +38,11 @@ from apps.authentication.serializers import (
     LogoutSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    OrganizationSerializer,
 )
-from apps.authentication.models import UserProfile, AuthToken
+from apps.authentication.models import UserProfile, AuthToken, Organization
 from apps.authentication.permissions import IsAdminRole, IsAnalystRole
+from apps.conflits.audit import log_activity
 
 
 # ==================== JWT Token Endpoints ====================
@@ -132,7 +135,17 @@ class UserRegistrationView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        
+
+        log_activity(
+            action_type='create',
+            resource_type='User',
+            resource_id=user.id,
+            resource_name=user.username,
+            details={'email': user.email, 'role': getattr(getattr(user, 'profile', None), 'role', None)},
+            user=user,
+            request=request,
+        )
+
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
         
@@ -188,6 +201,15 @@ class LoginView(APIView):
         profile.last_login_ip = _get_client_ip(request)
         profile.save(update_fields=['last_login_ip', 'updated_at'])
 
+        log_activity(
+            action_type='login',
+            resource_type='User',
+            resource_id=user.id,
+            resource_name=user.username,
+            user=user,
+            request=request,
+        )
+
         # Generate tokens
         refresh = RefreshToken.for_user(user)
         
@@ -227,6 +249,38 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         return Response(serializer.data)
 
 
+class OrganizationView(APIView):
+    """
+    Get and update the current user's organization (branding).
+    GET/PATCH /api/auth/organization/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        org = getattr(self.request.user.profile, 'organization', None)
+        if org is None:
+            raise NotFound("Aucune organisation associée à ce compte.")
+        return org
+
+    def get(self, request):
+        org = self.get_object()
+        serializer = OrganizationSerializer(org, context={'request': request})
+        return Response(serializer.data)
+
+    def patch(self, request):
+        org = self.get_object()
+        profile = getattr(request.user, 'profile', None)
+        if profile and profile.role != 'admin':
+            return Response(
+                {'error': 'Seul un administrateur peut modifier le branding.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = OrganizationSerializer(org, data=request.data, partial=True, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class ChangePasswordView(APIView):
     """
     Change user password
@@ -256,7 +310,17 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data['new_password'])
         user.save()
         user.profile.mark_password_changed()
-        
+
+        log_activity(
+            action_type='update',
+            resource_type='User',
+            resource_id=user.id,
+            resource_name=user.username,
+            details={'action': 'password_change'},
+            user=user,
+            request=request,
+        )
+
         return Response({
             'message': 'Password changed successfully'
         })
@@ -279,6 +343,15 @@ class LogoutView(APIView):
             refresh.blacklist()
         except TokenError:
             return Response({'error': 'Invalid or expired refresh token'}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_activity(
+            action_type='logout',
+            resource_type='User',
+            resource_id=request.user.id,
+            resource_name=request.user.username,
+            user=request.user,
+            request=request,
+        )
 
         return Response({'message': 'Logout successful'})
 
@@ -463,6 +536,16 @@ class AdminUserListView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
+        log_activity(
+            action_type='create',
+            resource_type='User',
+            resource_id=user.id,
+            resource_name=user.username,
+            details={'action': 'admin_invite', 'role': getattr(getattr(user, 'profile', None), 'role', None)},
+            user=request.user,
+            request=request,
+        )
+
         invitation_email_sent = False
         if user.email:
             raw_password = getattr(user, '_raw_password', None)
@@ -512,6 +595,19 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
             return queryset.filter(id=self.request.user.id)
         return queryset.filter(profile__organization=organization)
 
+    def perform_destroy(self, instance):
+        log_activity(
+            action_type='delete',
+            resource_type='User',
+            resource_id=instance.id,
+            resource_name=instance.username,
+            details={'action': 'admin_delete_user'},
+            user=self.request.user,
+            request=self.request,
+            risk_score=60,
+        )
+        instance.delete()
+
 
 class AdminUpdateUserRoleView(APIView):
     """
@@ -545,7 +641,18 @@ class AdminUpdateUserRoleView(APIView):
         
         user.profile.role = role
         user.profile.save()
-        
+
+        log_activity(
+            action_type='update',
+            resource_type='UserProfile',
+            resource_id=user.id,
+            resource_name=user.username,
+            details={'action': 'role_change', 'new_role': role},
+            user=request.user,
+            request=request,
+            risk_score=40,
+        )
+
         return Response({
             'message': f'User role updated to {role}',
             'user': AdminUserSerializer(user).data

@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, include
 
 from apps.nettoyage.views import (
     CleaningApplyView,
@@ -40,4 +40,7 @@ urlpatterns = [
     path('sources/<int:source_id>/preview/', CleaningPreviewView.as_view(), name='cleaning_preview'),
     path('sources/<int:source_id>/apply/', CleaningApplyView.as_view(), name='cleaning_apply'),
     path('sources/<int:source_id>/apply-async/', CleaningApplyAsyncView.as_view(), name='cleaning_apply_async'),
+
+    # Intelligent structural detection endpoints
+    path('structure/', include('apps.nettoyage.structure_urls')),
 ]

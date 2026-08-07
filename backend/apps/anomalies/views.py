@@ -13,10 +13,12 @@ from apps.anomalies.serializers import (
     AnomalyDetailSerializer,
     AnomalyListSerializer,
     AnomalyModelListSerializer,
+    AnomalyStatusUpdateSerializer,
     IsolationForestRunSerializer,
 )
 from apps.anomalies.services import AnomalyDetectionError, persist_detection_run, run_isolation_forest
 from apps.authentication.permissions import CanReadData, CanWriteData
+from apps.conflits.audit import log_activity
 
 logger = logging.getLogger(__name__)
 
@@ -47,19 +49,42 @@ def _anomaly_model_queryset_for_user(user):
     return qs.filter(training_source__uploaded_by=user)
 
 
-class AnomalyViewSet(viewsets.ReadOnlyModelViewSet):
-    """GET /api/anomalies/detections/ — GET /api/anomalies/detections/{id}/"""
+class AnomalyViewSet(viewsets.ModelViewSet):
+    """GET /api/anomalies/detections/ — GET/PATCH /api/anomalies/detections/{id}/"""
 
-    permission_classes = [IsAuthenticated, CanReadData]
     pagination_class = AnomalyPagination
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_permissions(self):
+        if self.action == "partial_update":
+            return [IsAuthenticated(), CanWriteData()]
+        return [IsAuthenticated(), CanReadData()]
 
     def get_queryset(self):
-        return _anomaly_queryset_for_user(self.request.user)
+        qs = _anomaly_queryset_for_user(self.request.user)
+        severity = self.request.query_params.get("severity")
+        if severity:
+            qs = qs.filter(severity=severity)
+        return qs
 
     def get_serializer_class(self):
+        if self.action == "partial_update":
+            return AnomalyStatusUpdateSerializer
         if self.action == "retrieve":
             return AnomalyDetailSerializer
         return AnomalyListSerializer
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_activity(
+            action_type='update',
+            resource_type='Anomaly',
+            resource_id=instance.id,
+            resource_name=f'Anomaly #{instance.id}',
+            user=self.request.user,
+            request=self.request,
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class AnomalyModelViewSet(viewsets.ReadOnlyModelViewSet):
@@ -105,6 +130,16 @@ class IsolationForestRunView(APIView):
                     model_name=(data.get("model_name") or "").strip() or None,
                 )
                 result["persisted"] = persist_info
+
+            log_activity(
+                action_type='create',
+                resource_type='AnomalyModel',
+                resource_id=persist_info.get('model_id') if data["persist"] else None,
+                resource_name=(data.get("model_name") or "").strip() or 'Isolation Forest Run',
+                user=request.user,
+                request=request,
+                status_code=status.HTTP_200_OK,
+            )
 
             return Response(result, status=status.HTTP_200_OK)
         except AnomalyDetectionError as e:

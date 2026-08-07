@@ -14,6 +14,7 @@ from apps.authentication.views import (
     LogoutAllView,
     UserProfileView,
     ChangePasswordView,
+    OrganizationView,
     APITokenListView,
     APITokenRevokeView,
     PasswordResetRequestView,
@@ -46,6 +47,7 @@ urlpatterns = [
     
     # ==================== User Management ====================
     path('profile/', UserProfileView.as_view(), name='user_profile'),
+    path('organization/', OrganizationView.as_view(), name='organization'),
     path('change-password/', ChangePasswordView.as_view(), name='change_password'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('logout-all/', LogoutAllView.as_view(), name='logout_all'),

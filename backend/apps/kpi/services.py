@@ -646,10 +646,17 @@ class PivotService:
             period_end = config.get('period_end')
 
             if source_id and source_table == 'ingestion_rawdata':
-                rows = RawData.objects.filter(source_id=source_id).values()
-                frame = pd.DataFrame(
-                    [self.calculation_service._normalize_tabular_row(row) for row in rows]
-                )
+                source = DataSource.objects.filter(pk=source_id).first()
+                # Check if source has sheet relations → use joined view
+                if source and source.sheet_relations.filter(is_active=True).exists():
+                    from apps.ingestion.services import build_joined_view
+                    result = build_joined_view(source)
+                    frame = pd.DataFrame(result.get('rows', []))
+                else:
+                    rows = RawData.objects.filter(source_id=source_id).values()
+                    frame = pd.DataFrame(
+                        [self.calculation_service._normalize_tabular_row(row) for row in rows]
+                    )
             elif source_id and source_table == 'nettoyage_cleaneddata':
                 source = DataSource.objects.filter(pk=source_id).first()
                 if source is None:
@@ -1065,10 +1072,17 @@ class M4WorkbenchService:
             raise ValueError('Unsupported source table for the configurable engine')
 
         if source_id and source_table == 'ingestion_rawdata':
-            rows = RawData.objects.filter(source_id=source_id).values()
-            frame = pd.DataFrame(
-                [self.calculation_service._normalize_tabular_row(row) for row in rows]
-            )
+            source = DataSource.objects.filter(pk=source_id).first()
+            # Check if source has sheet relations → use joined view
+            if source and source.sheet_relations.filter(is_active=True).exists():
+                from apps.ingestion.services import build_joined_view
+                result = build_joined_view(source)
+                frame = pd.DataFrame(result.get('rows', []))
+            else:
+                rows = RawData.objects.filter(source_id=source_id).values()
+                frame = pd.DataFrame(
+                    [self.calculation_service._normalize_tabular_row(row) for row in rows]
+                )
         elif source_id and source_table == 'nettoyage_cleaneddata':
             source = DataSource.objects.filter(pk=source_id).first()
             if source is None:

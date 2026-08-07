@@ -369,3 +369,104 @@ def auto_clean_after_ingestion(source_id, user_id):
             'status': 'error',
             'message': str(e),
         }
+
+
+@shared_task(bind=True, max_retries=2)
+def run_structural_detection_async(
+    self,
+    source_id,
+    user_id,
+    sheet_name='',
+    force_llm=False,
+    validation_config=None,
+):
+    """
+    Async task for intelligent structural reconstruction.
+    Runs the full pipeline: heuristic → LLM (if needed) → validation gates.
+    """
+    import os
+    from django.contrib.auth.models import User
+    from apps.ingestion.models import DataSource
+    from apps.nettoyage.structure_models import CleaningRun, RawStructuralSnapshot
+    from apps.nettoyage.structure_detection.orchestrator import StructureDetectionOrchestrator
+
+    run = None
+    try:
+        source = DataSource.objects.get(id=source_id)
+        user = User.objects.get(id=user_id)
+
+        run = CleaningRun.objects.create(
+            source=source,
+            status='detecting',
+            sheet_name=sheet_name,
+            created_by=user,
+        )
+
+        file_path = None
+        if source.file_path and os.path.exists(source.file_path):
+            file_path = source.file_path
+        elif source.file and hasattr(source.file, 'path') and os.path.exists(source.file.path):
+            file_path = source.file.path
+
+        if not file_path:
+            run.status = 'failed'
+            run.error_message = 'Fichier source introuvable'
+            run.save(update_fields=['status', 'error_message'])
+            return {'status': 'error', 'message': 'File not found'}
+
+        orchestrator = StructureDetectionOrchestrator(validation_config or {})
+        result = orchestrator.detect_and_reconstruct(
+            file_path=file_path,
+            sheet_name=sheet_name or None,
+            source_id=source_id,
+            force_llm=force_llm,
+        )
+
+        fp = result.get('structural_fingerprint', {})
+        snapshot = RawStructuralSnapshot.objects.create(
+            source=source,
+            sheet_name=sheet_name,
+            structural_fingerprint=fp,
+            confidence_score=result.get('confidence_score', 0),
+            detected_subtables=result.get('reconstruction_plan', {}).get('subtables', []),
+            header_candidates=fp.get('header_candidates', []),
+            merged_cells=fp.get('merged_cells', []),
+            blank_zones=fp.get('blank_rows', []),
+            column_types=fp.get('column_types', {}),
+        )
+
+        run.snapshot = snapshot
+        run.method_used = result.get('method_used', 'heuristic')
+        run.status = result.get('status', 'completed')
+        run.confidence_score = result.get('confidence_score', 0)
+        run.correction_examples_used = result.get('correction_examples_used', [])
+        run.llm_model = result.get('llm_model', '')
+        run.llm_tokens_used = result.get('llm_tokens_used', 0)
+        run.llm_duration_ms = result.get('llm_duration_ms', 0)
+        run.reconstruction_plan = result.get('reconstruction_plan') or {}
+        run.validation_gates_passed = result.get('validation_report', {}).get('all_passed', True)
+        run.validation_gates_detail = result.get('validation_report', {})
+        run.rows_before = fp.get('total_rows', 0)
+        run.columns_before = fp.get('total_cols', 0)
+        run.subtables_detected = len(result.get('reconstruction_plan', {}).get('subtables', []))
+        run.duration_ms = result.get('duration_ms', 0)
+        run.error_message = result.get('error', '')
+        run.completed_at = timezone.now()
+        run.save()
+
+        logger.info(f"Structural detection completed for source {source_id}, run {run.id}")
+        return {
+            'status': 'success',
+            'run_id': run.id,
+            'method': run.method_used,
+            'confidence': float(run.confidence_score),
+        }
+
+    except Exception as e:
+        logger.exception(f"Structural detection failed for source {source_id}")
+        if run:
+            run.status = 'failed'
+            run.error_message = str(e)
+            run.completed_at = timezone.now()
+            run.save(update_fields=['status', 'error_message', 'completed_at'])
+        raise self.retry(exc=e, countdown=2 ** self.request.retries)

@@ -2,6 +2,7 @@ import re
 import time
 
 import pandas as pd
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -117,7 +118,12 @@ def apply_cleaning(*, source, user, pipeline_id, rule_ids, include_all_auto_rule
         )
 
         try:
-            if rule_ids and not include_all_auto_rules and not pipeline_id and not decision_overrides:
+            has_structural_rules = pipeline is not None and rules and any(
+                r.rule_type in ('unpivot', 'cell_level_transformation', 'remove_empty_rows', 'drop_columns_by_missing_threshold', 'validate_format', 'rename_columns', 'extract_subtables', 'fix_ambiguous_chars', 'extract_labeled_fields', 'split_value_unit', 'explode_delimited_list')
+                for r in rules
+            )
+            use_rules_path = has_structural_rules or (rule_ids and not include_all_auto_rules and not pipeline_id and not decision_overrides)
+            if use_rules_path:
                 legacy_result = _apply_rules(
                     dataframe=dataframe,
                     rules=rules,
@@ -139,7 +145,7 @@ def apply_cleaning(*, source, user, pipeline_id, rule_ids, include_all_auto_rule
                     ],
                     'score_detail': {},
                     'metadata': {
-                        'mode_application': 'rules_only',
+                        'mode_application': 'structural_rules' if has_structural_rules else 'rules_only',
                         'resume_executif': {
                             'statut': 'SUCCES',
                             'problemes_principaux': [],
@@ -274,8 +280,162 @@ def apply_cleaning(*, source, user, pipeline_id, rule_ids, include_all_auto_rule
     }
 
 
+def apply_cleaning_multi_sheet(*, source, user, pipeline_id, rule_ids, include_all_auto_rules, quality_gate, decision_overrides=None):
+    """
+    Apply cleaning to all sheets of a multi-sheet Excel source.
+    Returns per-sheet results.
+    """
+    sheets_df = _load_all_sheets_as_dataframes(source)
+    if len(sheets_df) <= 1:
+        return apply_cleaning(
+            source=source, user=user, pipeline_id=pipeline_id,
+            rule_ids=rule_ids, include_all_auto_rules=include_all_auto_rules,
+            quality_gate=quality_gate, decision_overrides=decision_overrides,
+        )
+
+    pipeline, rules, effective_quality_gate = _resolve_execution_plan(
+        source=source, user=user, pipeline_id=pipeline_id,
+        rule_ids=rule_ids, include_all_auto_rules=include_all_auto_rules,
+        quality_gate=quality_gate,
+    )
+
+    if not rules:
+        raise CleaningError(
+            _build_no_rules_message(
+                source=source, pipeline=pipeline,
+                rule_ids=rule_ids, include_all_auto_rules=include_all_auto_rules,
+            )
+        )
+
+    sheet_results = {}
+    total_affected = 0
+    total_processed = 0
+
+    for sheet_name, dataframe in sheets_df.items():
+        started_at = timezone.now()
+        start_time = time.perf_counter()
+        with transaction.atomic():
+            job = CleaningJob.objects.create(
+                source=source,
+                created_by=user,
+                rule=rules[0] if rules else None,
+                status='running',
+                total_rows=len(dataframe),
+                started_at=started_at,
+                execution_context={
+                    'source_id': source.id,
+                    'sheet_name': sheet_name,
+                    'pipeline': _serialize_pipeline(pipeline) if pipeline else None,
+                    'rule_ids': [item.id for item in rules],
+                    'resolved_rules': [_serialize_rule(item) for item in rules],
+                    'include_all_auto_rules': include_all_auto_rules,
+                    'quality_gate': effective_quality_gate,
+                    'decision_overrides': decision_overrides or [],
+                    'mode': 'multi_sheet_engine_pipeline',
+                },
+            )
+
+            try:
+                if rule_ids and not include_all_auto_rules and not pipeline_id and not decision_overrides:
+                    legacy_result = _apply_rules(dataframe=dataframe, rules=rules, quality_gate=effective_quality_gate)
+                    cleaned_dataframe = legacy_result['dataframe']
+                    validation_issues = legacy_result['validation_issues']
+                    cleaning_report = {
+                        'mapping': {'colonnes_mappees': [], 'colonnes_non_mappees': []},
+                        'corrections': [],
+                        'alertes': [
+                            {'regle': issue.get('rule'), 'severite': issue.get('code'), 'message': issue.get('message'), 'lignes': issue.get('row_numbers', [])}
+                            for issue in validation_issues
+                        ],
+                        'score_detail': {},
+                        'metadata': {
+                            'mode_application': 'rules_only',
+                            'lignes_initiales': len(dataframe),
+                            'lignes_finales': len(cleaned_dataframe),
+                            'score_qualite': _average_quality_score(cleaned_dataframe),
+                            'statut': 'SUCCES',
+                        },
+                    }
+                else:
+                    cleaned_dataframe, cleaning_report = _run_intelligent_engine(
+                        source=source, user=user, decision_overrides=decision_overrides or [],
+                    )
+                    cleaned_dataframe, cleaning_report = _apply_engine_decisions(
+                        cleaned_dataframe=cleaned_dataframe, cleaning_report=cleaning_report,
+                        decision_overrides=decision_overrides or [],
+                    )
+                    validation_issues = _extract_validation_issues_from_engine_report(cleaning_report)
+
+                quality_scores = _calculate_quality_scores(cleaned_dataframe)
+                changes_by_row = _build_changes_by_row_from_dataframes(dataframe, cleaned_dataframe)
+                _persist_cleaned_results(
+                    job=job, source=source, dataframe=cleaned_dataframe,
+                    quality_scores=quality_scores, changes_by_row=changes_by_row,
+                    cleaning_report=cleaning_report,
+                )
+
+                rows_affected = _count_rows_affected(changes_by_row, dataframe, cleaned_dataframe)
+                duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+                job.status = 'completed'
+                job.rows_processed = len(cleaned_dataframe)
+                job.rows_affected = rows_affected
+                job.progress_percent = 100
+                job.completed_at = timezone.now()
+                job.duration_ms = duration_ms
+                job.execution_context = {**(job.execution_context or {}), 'cleaning_report': _json_safe(cleaning_report)}
+                job.save()
+
+                total_affected += rows_affected
+                total_processed += len(cleaned_dataframe)
+
+                sheet_results[sheet_name] = {
+                    'status': 'completed',
+                    'job_id': job.id,
+                    'rows_initial': len(dataframe),
+                    'rows_final': len(cleaned_dataframe),
+                    'rows_affected': rows_affected,
+                    'duration_ms': duration_ms,
+                    'quality_scores': quality_scores,
+                    'business_summary': _build_business_summary(
+                        {'row_count': len(cleaned_dataframe), 'column_count': len([c for c in cleaned_dataframe.columns if c != '_row_number']),
+                         'rows_processed': len(cleaned_dataframe), 'rows_affected': rows_affected, 'rows_skipped': 0, 'rows_failed': 0,
+                         'missing_value_rate': _summarize_dataframe(cleaned_dataframe)['missing_value_rate']},
+                        validation_issues,
+                    ),
+                    'cleaning_report': cleaning_report,
+                }
+            except (CleaningError, Exception) as exc:
+                duration_ms = int((time.perf_counter() - start_time) * 1000)
+                job.status = 'failed'
+                job.rows_processed = 0
+                job.rows_failed = len(dataframe)
+                job.completed_at = timezone.now()
+                job.duration_ms = duration_ms
+                job.error_message = str(exc)
+                job.save()
+                sheet_results[sheet_name] = {'status': 'failed', 'error': str(exc), 'rows_initial': len(dataframe)}
+
+    return {
+        'source_id': source.id,
+        'source_name': source.name,
+        'multi_sheet': True,
+        'sheet_count': len(sheet_results),
+        'total_rows_processed': total_processed,
+        'total_rows_affected': total_affected,
+        'sheets': sheet_results,
+    }
+
+
 def suggest_cleaning(*, source):
-    dataframe = _load_source_dataframe(source)
+    has_sheets = source.sheets.exists()
+    if has_sheets:
+        sheets_df = _load_all_sheets_as_dataframes(source)
+        dataframe = next(iter(sheets_df.values()), None)
+    else:
+        dataframe = _load_source_dataframe(source)
+    if dataframe is None or dataframe.empty:
+        return {'suggestions': [], 'detected_issues': [], 'summary': {}}
     data_columns = _data_columns(dataframe)
     missing_matrix = _missing_like_matrix(dataframe, data_columns)
     suggestions = []
@@ -584,8 +744,11 @@ def _fuzzy_suggest_matches(source_columns, canonical_columns, top_n=1, threshold
     return suggestions
 
 
-def _load_source_dataframe(source):
-    raw_rows = list(source.raw_data_rows.order_by('row_number').values('row_number', 'data'))
+def _load_source_dataframe(source, sheet_name=None):
+    qs = source.raw_data_rows.order_by('row_number')
+    if sheet_name is not None:
+        qs = qs.filter(sheet_name=sheet_name)
+    raw_rows = list(qs.values('row_number', 'data', 'sheet_name'))
     if not raw_rows:
         raise CleaningError('The selected data source does not contain raw rows.')
 
@@ -597,6 +760,27 @@ def _load_source_dataframe(source):
 
     dataframe = pd.DataFrame(records)
     return dataframe.where(pd.notnull(dataframe), None)
+
+
+def _load_all_sheets_as_dataframes(source):
+    """Load all sheets as separate DataFrames. Returns dict {sheet_name: DataFrame}."""
+    from apps.ingestion.models import DataSourceSheet
+    sheets = DataSourceSheet.objects.filter(source=source)
+    if not sheets.exists():
+        df = _load_source_dataframe(source)
+        return {'': df}
+
+    result = {}
+    for sheet in sheets:
+        try:
+            df = _load_source_dataframe(source, sheet_name=sheet.sheet_name)
+            result[sheet.sheet_name] = df
+        except CleaningError:
+            continue
+    if not result:
+        df = _load_source_dataframe(source)
+        result[''] = df
+    return result
 
 
 def _run_cleaning_job(*, source, user, rule, dataframe, execution_context):
@@ -934,6 +1118,186 @@ def _apply_single_rule(*, dataframe, rule):
         working = working.loc[~mask].reset_index(drop=True)
         rows_affected += before - len(working)
 
+    elif rule.rule_type == 'extract_labeled_fields':
+        from apps.nettoyage.structure_detection.cell_transformer import extract_labeled_fields
+        source_column = rule.parameters.get('source_column')
+        labels = rule.parameters.get('labels', [])
+        result_columns = rule.parameters.get('result_columns', [])
+        if not source_column or not labels:
+            raise CleaningError('extract_labeled_fields requires source_column and labels parameters.')
+        if source_column not in working.columns:
+            raise CleaningError(f'extract_labeled_fields source column "{source_column}" not found.')
+        for col in result_columns:
+            working[col] = ''
+        original = working[source_column].copy()
+        for idx, row in working.iterrows():
+            texte = str(row[source_column]) if pd.notna(row[source_column]) else ''
+            extracted = extract_labeled_fields(texte, labels)
+            for col in result_columns:
+                working.at[idx, col] = extracted.get(col, '')
+        working = working.drop(columns=[source_column])
+        rows_affected += _record_changes(working, original, result_columns[0] if result_columns else source_column, changes_by_row, 'extract_labeled_fields')
+
+    elif rule.rule_type == 'fix_ambiguous_chars':
+        from apps.nettoyage.structure_detection.cell_transformer import fix_ambiguous_numeric_chars
+        substitutions = rule.parameters.get('substitutions', {})
+        cas_incertains = rule.parameters.get('cas_incertains', [])
+        for column in target_columns:
+            if column not in working.columns:
+                continue
+            original = working[column].copy()
+            for idx, val in working[column].items():
+                str_val = str(val) if pd.notna(val) else ''
+                result = fix_ambiguous_numeric_chars(str_val, substitutions, cas_incertains)
+                if not result['needs_review']:
+                    working.at[idx, column] = result['corrected']
+            rows_affected += _record_changes(working, original, column, changes_by_row, f'fix_ambiguous_chars:{column}')
+
+    elif rule.rule_type == 'split_value_unit':
+        import re as _re
+        source_column = rule.parameters.get('source_column')
+        target_number = rule.parameters.get('target_number_column', 'Quantity')
+        target_text = rule.parameters.get('target_text_column', 'Measure')
+        if not source_column:
+            raise CleaningError('split_value_unit requires source_column parameter.')
+        if source_column not in working.columns:
+            raise CleaningError(f'split_value_unit source column "{source_column}" not found.')
+        working[target_number] = ''
+        working[target_text] = ''
+        original_number = working[target_number].copy()
+        original_text = working[target_text].copy()
+        for idx, val in working[source_column].items():
+            str_val = str(val) if pd.notna(val) else ''
+            match = _re.match(r'^([+-]?\d+(?:[.,]\d+)?)\s*([a-zA-Z].*)$', str_val.strip())
+            if match:
+                working.at[idx, target_number] = match.group(1).replace(',', '.')
+                working.at[idx, target_text] = match.group(2).strip()
+            else:
+                working.at[idx, target_number] = str_val
+                working.at[idx, target_text] = ''
+        working = working.drop(columns=[source_column])
+        rows_affected += _record_changes(working, original_number, target_number, changes_by_row, f'split_value_unit:{source_column}')
+
+    elif rule.rule_type == 'explode_delimited_list':
+        colonnes_liees = rule.parameters.get('colonnes_liees', [])
+        delimiteur = rule.parameters.get('delimiteur', '|')
+        colonnes_a_repeter = rule.parameters.get('colonnes_a_repeter', [])
+        if not colonnes_liees:
+            raise CleaningError('explode_delimited_list requires colonnes_liees parameter.')
+        missing = [c for c in colonnes_liees if c not in working.columns]
+        if missing:
+            raise CleaningError(f'explode_delimited_list columns not found: {missing}')
+        result_rows = []
+        for idx, row in working.iterrows():
+            ligne = row.to_dict()
+            listes = {}
+            for col in colonnes_liees:
+                val = ligne.get(col, '')
+                if pd.isna(val):
+                    val = ''
+                parts = [p.strip() for p in str(val).split(delimiteur)]
+                listes[col] = parts
+            lengths = [len(parts) for parts in listes.values()]
+            if len(set(lengths)) > 1:
+                result_rows.append(ligne)
+                continue
+            nb = lengths[0] if lengths else 0
+            if nb == 0:
+                result_rows.append(ligne)
+                continue
+            for i in range(nb):
+                new_row = {}
+                for col_a_repeter in colonnes_a_repeter:
+                    new_row[col_a_repeter] = ligne.get(col_a_repeter, '')
+                for col in colonnes_liees:
+                    new_row[col] = listes[col][i]
+                result_rows.append(new_row)
+        before = len(working)
+        working = pd.DataFrame(result_rows)
+        if '_row_number' not in working.columns:
+            working['_row_number'] = range(1, len(working) + 1)
+        rows_affected += abs(len(working) - before)
+
+    elif rule.rule_type == 'unpivot':
+        from apps.nettoyage.structure_detection.pivot_transformer import PivotTransformer
+        params = rule.parameters
+        header_row_index = params.get('header_row_index')
+        value_col_indices = params.get('value_col_indices')
+        unpivot_map = params.get('unpivot_map', [])
+        source_file_path = params.get('source_file_path', '')
+
+        original_df = None
+        if source_file_path:
+            try:
+                from pathlib import Path
+                media_root = Path(settings.MEDIA_ROOT)
+                fp = source_file_path
+                full_path = media_root / fp if not Path(fp).is_absolute() else Path(fp)
+                if not full_path.exists():
+                    full_path = Path(fp)
+                if full_path.exists():
+                    original_df = pd.read_excel(str(full_path), header=None, engine='openpyxl')
+            except Exception:
+                original_df = None
+
+        if original_df is not None and header_row_index is not None and value_col_indices:
+            working = original_df.copy()
+            if header_row_index > 0:
+                header_values = working.iloc[header_row_index].tolist()
+                working = working.iloc[header_row_index + 1:].reset_index(drop=True)
+                new_cols = []
+                for i, h in enumerate(header_values):
+                    h_str = str(h).strip() if pd.notna(h) else ''
+                    if h_str and h_str != 'None':
+                        new_cols.append(h_str)
+                    else:
+                        new_cols.append(f'col_{i}')
+                working.columns = new_cols
+        else:
+            if header_row_index is not None and value_col_indices:
+                if header_row_index > 0 and len(working) > header_row_index:
+                    header_values = working.iloc[header_row_index].tolist()
+                    working = working.iloc[header_row_index + 1:].reset_index(drop=True)
+                    new_cols = []
+                    for i, h in enumerate(header_values):
+                        h_str = str(h).strip() if pd.notna(h) else ''
+                        if h_str and h_str != 'None':
+                            new_cols.append(h_str)
+                        else:
+                            new_cols.append(f'col_{i}')
+                    working.columns = new_cols
+
+        mapping = {
+            'colonnes_identifiantes': params.get('colonnes_identifiantes', []),
+            'colonnes_valeurs': params.get('colonnes_valeurs', []),
+            'nom_nouvelle_colonne_dimension': params.get('nom_nouvelle_colonne_dimension', 'Dimension'),
+            'nom_nouvelle_colonne_valeur': params.get('nom_nouvelle_colonne_valeur', 'Valeur'),
+        }
+        id_vars = mapping['colonnes_identifiantes']
+        value_vars = mapping['colonnes_valeurs']
+        missing = [c for c in id_vars + value_vars if c not in working.columns]
+        if missing:
+            raise CleaningError(f'unpivot: colonnes manquantes: {missing}. Colonnes dispo: {list(working.columns)[:10]}')
+        transformer = PivotTransformer()
+        before_rows = len(working)
+        result_df = transformer.unpivot_from_mapping(working, mapping)
+        if result_df is None:
+            raise CleaningError('unpivot: transformation echouee (resultat vide)')
+        if unpivot_map and mapping['nom_nouvelle_colonne_dimension'] in result_df.columns:
+            dim_col = mapping['nom_nouvelle_colonne_dimension']
+            col_label_map = {}
+            for entry in unpivot_map:
+                src = entry.get('source_col')
+                path = entry.get('path', [])
+                non_empty = [p for p in path if p and p != 'None']
+                label = ' | '.join(non_empty[:-1]) if len(non_empty) > 1 else (non_empty[0] if non_empty else f'col_{src}')
+                col_label_map[f'col_{src}'] = label
+            result_df[dim_col] = result_df[dim_col].map(lambda x: col_label_map.get(x, x))
+        working = result_df
+        if '_row_number' not in working.columns:
+            working['_row_number'] = range(1, len(working) + 1)
+        rows_affected += abs(len(working) - before_rows)
+
     else:
         raise CleaningError(f'Unsupported cleaning rule type: {rule.rule_type}')
 
@@ -998,7 +1362,17 @@ def _persist_cleaned_results(*, job, source, dataframe, quality_scores, changes_
             )
         )
 
-    CleanedData.objects.bulk_create(cleaned_rows, batch_size=1000)
+    CleanedData.objects.filter(job=job).delete()
+    seen_original_ids = set()
+    deduped_rows = []
+    for row in cleaned_rows:
+        oid = row.original_data_id
+        if oid is not None and oid in seen_original_ids:
+            continue
+        if oid is not None:
+            seen_original_ids.add(oid)
+        deduped_rows.append(row)
+    CleanedData.objects.bulk_create(deduped_rows, batch_size=1000)
 
 
 def _build_structure_trace_lookup(cleaning_report):

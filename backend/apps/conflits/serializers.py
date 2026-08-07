@@ -6,7 +6,7 @@ API representations for conflict data and resolution workflows.
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from apps.conflits.models import (
-    ConflictType, Conflict, ConflictResolution, ActivityLog
+    ConflictType, Conflict, ConflictResolution, ActivityLog, ScheduledJob
 )
 
 
@@ -255,3 +255,49 @@ class ConflictDashboardStatSerializer(serializers.Serializer):
     assigned_to_current_user = serializers.IntegerField()
     avg_resolution_time_minutes = serializers.FloatField()
     resolution_rate_percent = serializers.FloatField()
+
+
+# ─── Reporting ───────────────────────────────────────────────
+
+class ReportConfigSerializer(serializers.ModelSerializer):
+    """Scheduled report configuration (wraps ScheduledJob)."""
+
+    schedule_display = serializers.SerializerMethodField()
+    last_run_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ScheduledJob
+        fields = [
+            "id", "job_name", "job_type", "schedule_type",
+            "interval_minutes", "cron_expression", "next_run_at",
+            "last_run_at", "last_run_status", "last_run_display",
+            "is_active", "job_parameters", "notification_recipients",
+            "schedule_display", "created_at",
+        ]
+        read_only_fields = [
+            "id", "job_type", "last_run_at", "last_run_status",
+            "next_run_at", "last_run_display", "schedule_display",
+            "created_at",
+        ]
+
+    def get_schedule_display(self, obj):
+        if obj.schedule_type == "interval" and obj.interval_minutes:
+            if obj.interval_minutes < 60:
+                return f"Toutes les {obj.interval_minutes} min"
+            hours = obj.interval_minutes // 60
+            return f"Toutes les {hours}h" if hours == 1 else f"Toutes les {hours}h"
+        if obj.schedule_type == "cron" and obj.cron_expression:
+            return f"Cron: {obj.cron_expression}"
+        if obj.schedule_type == "once":
+            return "Une fois"
+        return "—"
+
+    def get_last_run_display(self, obj):
+        if not obj.last_run_at:
+            return "Jamais"
+        return obj.last_run_at.strftime("%d/%m/%Y %H:%M")
+
+
+class TriggerReportSerializer(serializers.Serializer):
+    """Trigger immediate report generation."""
+    config_id = serializers.IntegerField()

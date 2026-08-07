@@ -3,10 +3,11 @@ M3: Conflict Detection & Resolution API Views
 REST endpoints for conflict management and guided resolution workflow.
 """
 
-from rest_framework import viewsets, generics, status,filters
+from rest_framework import viewsets, generics, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Count, Case, When, IntegerField
 from django.utils import timezone
@@ -15,15 +16,17 @@ from django.contrib.auth.models import User
 from django.db import models
 
 from apps.conflits.models import (
-    ConflictType, Conflict, ConflictResolution, ActivityLog
+    ConflictType, Conflict, ConflictResolution, ActivityLog, ScheduledJob
 )
 from apps.conflits.serializers import (
     ConflictTypeSerializer, ConflictListSerializer, ConflictDetailSerializer,
     ConflictResolutionSerializer, ConflictResolutionGuidanceSerializer,
     ConflictResolutionRequestSerializer, ConflictBulkActionSerializer,
-    ActivityLogSerializer, ConflictDashboardStatSerializer
+    ActivityLogSerializer, ConflictDashboardStatSerializer,
+    ReportConfigSerializer, TriggerReportSerializer,
 )
 from apps.conflits.services import ConflictDetectionService, ConflictResolutionService
+from apps.conflits.audit import log_activity
 from apps.authentication.permissions import CanReadData, CanWriteData
 from apps.ingestion.models import DataSource
 from apps.nettoyage.models import CleaningJob
@@ -537,3 +540,305 @@ class ConflictDetectionAPIView(generics.CreateAPIView):
                 {'error': f'DataSource {source_id} not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+# ─── Reporting ───────────────────────────────────────────────
+
+class ReportConfigViewSet(viewsets.ModelViewSet):
+    """CRUD for scheduled report configurations."""
+
+    permission_classes = [IsAuthenticated, CanReadData]
+    serializer_class = ReportConfigSerializer
+    pagination_class = None
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return ScheduledJob.objects.filter(
+            job_type="report_generation",
+            created_by=self.request.user,
+        ).order_by("-created_at")
+
+    def perform_create(self, serializer):
+        serializer.save(
+            job_type="report_generation",
+            created_by=self.request.user,
+            owned_by=self.request.user,
+            is_active=True,
+        )
+
+
+class TriggerReportView(APIView):
+    """POST /api/conflits/reports/trigger/ — generate a report immediately."""
+
+    permission_classes = [IsAuthenticated, CanWriteData]
+
+    def post(self, request):
+        ser = TriggerReportSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        config_id = ser.validated_data["config_id"]
+
+        config = get_object_or_404(
+            ScheduledJob,
+            id=config_id,
+            job_type="report_generation",
+            created_by=request.user,
+        )
+
+        params = config.job_parameters or {}
+        source_id = params.get("source_id")
+        if not source_id:
+            return Response(
+                {"error": "Aucune source configurée pour ce rapport."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from rest_framework.test import APIRequestFactory
+
+            factory = APIRequestFactory()
+            drf_request = factory.post(
+                "/api/dashboard/export/pdf/",
+                {"source_id": source_id},
+                format="json",
+            )
+            drf_request.user = request.user
+            drf_request.auth = request.auth if hasattr(request, "auth") else None
+
+            from apps.dashboard.views import DashboardExportPDFAPIView
+
+            pdf_response = DashboardExportPDFAPIView.as_view()(drf_request)
+            if pdf_response.status_code != 200:
+                return Response(
+                    {"error": "Erreur lors de la génération du PDF."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            pdf_bytes = pdf_response.content
+
+            # Save to disk
+            import os
+            from django.conf import settings
+            from django.utils import timezone
+
+            report_dir = os.path.join(settings.MEDIA_ROOT, "reports")
+            os.makedirs(report_dir, exist_ok=True)
+            filename = f"report_{config.id}_{timezone.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            filepath = os.path.join(report_dir, filename)
+            with open(filepath, "wb") as f:
+                f.write(pdf_bytes)
+
+            # Update config tracking
+            config.last_run_at = timezone.now()
+            config.last_run_status = "success"
+            config.save(update_fields=["last_run_at", "last_run_status"])
+
+            # Send email with attached PDF to configured recipients
+            recipients = config.notification_recipients or []
+            if recipients:
+                try:
+                    from django.core.mail import EmailMessage
+                    from django.conf import settings
+
+                    email = EmailMessage(
+                        subject=f"Rapport DécisioBI — {config.job_name}",
+                        body=f"Bonjour,\n\nVeuillez trouver ci-joint le rapport « {config.job_name} » généré le {timezone.now().strftime('%d/%m/%Y à %H:%M')}.\n\n— DécisioBI",
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        to=recipients,
+                    )
+                    email.attach(filename, pdf_bytes, "application/pdf")
+                    email.send(fail_silently=True)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Report %s generated but email failed: %s", config.id, e
+                    )
+
+            log_activity(
+                action_type='export',
+                resource_type='Report',
+                resource_id=config.id,
+                resource_name=config.job_name,
+                user=request.user,
+                request=request,
+                details={'filename': filename},
+                status_code=status.HTTP_200_OK,
+            )
+
+            return Response(
+                {
+                    "success": True,
+                    "filename": filename,
+                    "filepath": filepath,
+                    "size_bytes": len(pdf_bytes),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as exc:
+            config.last_run_status = "failed"
+            config.save(update_fields=["last_run_status"])
+            return Response(
+                {"error": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ReportHistoryView(APIView):
+    """GET /api/conflits/reports/history/ — list generated reports."""
+
+    permission_classes = [IsAuthenticated, CanReadData]
+
+    def get(self, request):
+        import os, glob
+        from django.conf import settings
+
+        report_dir = os.path.join(settings.MEDIA_ROOT, "reports")
+        if not os.path.isdir(report_dir):
+            return Response([], status=status.HTTP_200_OK)
+
+        files = []
+        for fpath in sorted(glob.glob(os.path.join(report_dir, "*.pdf")), reverse=True):
+            stat = os.stat(fpath)
+            fname = os.path.basename(fpath)
+            files.append(
+                {
+                    "filename": fname,
+                    "size_bytes": stat.st_size,
+                    "created_at": stat.st_mtime,
+                    "download_url": f"{settings.MEDIA_URL}reports/{fname}",
+                }
+            )
+
+        return Response(files[:50], status=status.HTTP_200_OK)
+
+
+class ActivityFeedView(APIView):
+    """
+    GET /api/conflits/activity-feed/
+    Returns the 50 most recent activities for the current user's organization.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        org_id = _organization_id_for_user(user)
+
+        if org_id:
+            org_user_ids = list(
+                User.objects.filter(
+                    profile__organization_id=org_id
+                ).values_list('id', flat=True)
+            )
+            queryset = ActivityLog.objects.filter(
+                user_id__in=org_user_ids
+            ).select_related('user')
+        else:
+            queryset = ActivityLog.objects.filter(user=user).select_related('user')
+
+        limit = min(int(request.query_params.get('limit', 50)), 100)
+        activities = queryset.order_by('-created_at')[:limit]
+
+        data = []
+        for a in activities:
+            profile = getattr(a.user, 'profile', None) if a.user else None
+            data.append({
+                'id': a.id,
+                'user': {
+                    'id': a.user_id,
+                    'username': a.user.username if a.user else None,
+                    'email': a.user_email,
+                    'role': a.user_role,
+                },
+                'action_type': a.action_type,
+                'resource_type': a.resource_type,
+                'resource_id': a.resource_id,
+                'resource_name': a.resource_name,
+                'action_details': a.action_details,
+                'created_at': a.created_at.isoformat() if a.created_at else None,
+            })
+
+        return Response({'activities': data})
+
+
+# ==================== Presence ====================
+
+_active_users = {}  # {user_id: {'last_seen': datetime, 'org_id': int, 'page': str}}
+
+
+def _cleanup_stale():
+    now = timezone.now()
+    stale = [
+        uid for uid, info in _active_users.items()
+        if (now - info['last_seen']).total_seconds() > 90
+    ]
+    for uid in stale:
+        del _active_users[uid]
+
+
+class PresenceHeartbeatView(APIView):
+    """
+    POST /api/auth/presence/heartbeat/
+    Body: {"page": "dashboard"} (optional)
+    Registers the user as active. Called every 30s by frontend.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        org_id = _organization_id_for_user(user)
+        page = request.data.get('page', '')
+
+        _active_users[user.id] = {
+            'last_seen': timezone.now(),
+            'org_id': org_id,
+            'page': page,
+            'username': user.username,
+            'email': user.email,
+            'role': getattr(getattr(user, 'profile', None), 'role', None),
+        }
+
+        _cleanup_stale()
+
+        return Response({'status': 'ok'})
+
+
+class PresenceListView(APIView):
+    """
+    GET /api/auth/presence/
+    Returns the list of currently active members in the same organization.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        org_id = _organization_id_for_user(user)
+        _cleanup_stale()
+
+        now = timezone.now()
+        online = []
+
+        for uid, info in _active_users.items():
+            elapsed = (now - info['last_seen']).total_seconds()
+            if elapsed > 60:
+                continue
+
+            if org_id and info.get('org_id') == org_id:
+                online.append({
+                    'user_id': uid,
+                    'username': info['username'],
+                    'email': info['email'],
+                    'role': info['role'],
+                    'page': info.get('page', ''),
+                    'last_seen': info['last_seen'].isoformat(),
+                })
+            elif uid == user.id:
+                online.append({
+                    'user_id': uid,
+                    'username': info['username'],
+                    'email': info['email'],
+                    'role': info['role'],
+                    'page': info.get('page', ''),
+                    'last_seen': info['last_seen'].isoformat(),
+                })
+
+        return Response({'online_users': online})

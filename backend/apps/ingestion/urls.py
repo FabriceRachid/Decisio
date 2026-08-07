@@ -10,6 +10,11 @@ from apps.ingestion.views import (
     IngestionJobListView,
     IngestionJobView,
     ImportTemplateListView,
+    SheetRelationListView,
+    SheetRelationCreateView,
+    SheetRelationDetailView,
+    SuggestRelationsView,
+    JoinedViewView,
 )
 
 
@@ -18,6 +23,11 @@ urlpatterns = [
     path('sources/', DataSourceListView.as_view(), name='ingestion_source_list'),
     path('sources/<int:pk>/', DataSourceDetailView.as_view(), name='ingestion_source_detail'),
     path('sources/<int:pk>/raw-data/', RawDataListView.as_view(), name='ingestion_source_raw_data'),
+    path('sources/<int:pk>/relations/', SheetRelationListView.as_view(), name='ingestion_source_relations'),
+    path('sources/<int:pk>/relations/create/', SheetRelationCreateView.as_view(), name='ingestion_source_relation_create'),
+    path('sources/<int:source_pk>/relations/<int:pk>/', SheetRelationDetailView.as_view(), name='ingestion_source_relation_detail'),
+    path('sources/<int:pk>/suggest-relations/', SuggestRelationsView.as_view(), name='ingestion_source_suggest_relations'),
+    path('sources/<int:pk>/joined-view/', JoinedViewView.as_view(), name='ingestion_source_joined_view'),
     path('sources/preview/', DataSourcePreviewView.as_view(), name='ingestion_source_preview'),
     path('sources/upload/', DataSourceUploadView.as_view(), name='ingestion_source_upload'),
     path('sources/async-upload/', DataSourceAsyncUploadView.as_view(), name='ingestion_source_async_upload'),

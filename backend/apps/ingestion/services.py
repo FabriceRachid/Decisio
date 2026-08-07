@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage
 from django.utils import timezone
 
-from apps.ingestion.models import DataSource, RawData
+from apps.ingestion.models import DataSource, DataSourceSheet, RawData
 
 
 class IngestionError(Exception):
@@ -122,6 +122,60 @@ ERP_IMPORT_TEMPLATES = {
 
 def preview_uploaded_file(*, user, uploaded_file, source_type, delimiter, encoding, has_header, required_columns, key_columns, template_id, column_mapping):
     file_bytes = _get_uploaded_file_bytes(uploaded_file)
+
+    is_excel = source_type == 'excel' or (
+        uploaded_file.name and uploaded_file.name.lower().endswith(('.xlsx', '.xls', '.xlsm'))
+    )
+
+    if is_excel:
+        try:
+            all_sheet_analyses = _analyze_file_bytes_multi_sheet(
+                user=user, filename=uploaded_file.name, file_bytes=file_bytes,
+                source_type='excel', delimiter=delimiter, encoding=encoding,
+                has_header=has_header, required_columns=required_columns,
+                key_columns=key_columns, template_id=template_id,
+                column_mapping=column_mapping,
+            )
+        except Exception:
+            all_sheet_analyses = None
+
+        if all_sheet_analyses and len(all_sheet_analyses) > 1:
+            sheets_preview = []
+            for sheet_name, sheet_analysis in all_sheet_analyses.items():
+                sheets_preview.append({
+                    'sheet_name': sheet_name,
+                    'row_count': sheet_analysis['row_count'],
+                    'column_count': sheet_analysis['column_count'],
+                    'columns': sheet_analysis['columns'],
+                    'rows': sheet_analysis['rows'][:10],
+                    'quality_score': sheet_analysis.get('metadata', {}).get('quality_score', 0),
+                    'content_type': sheet_analysis.get('metadata', {}).get('content_type', ''),
+                    'validation_errors': sheet_analysis['validation_errors'],
+                    'row_validation_results': sheet_analysis['row_validation_results'],
+                })
+
+            first_analysis = list(all_sheet_analyses.values())[0]
+            return {
+                'filename': first_analysis['filename'],
+                'source_type': 'excel',
+                'delimiter': delimiter,
+                'encoding': encoding,
+                'checksum_md5': first_analysis['checksum_md5'],
+                'file_size_bytes': first_analysis['file_size_bytes'],
+                'row_count': sum(s['row_count'] for s in sheets_preview),
+                'column_count': max(s['column_count'] for s in sheets_preview),
+                'rows': sheets_preview[0]['rows'],
+                'columns': sheets_preview[0]['columns'],
+                'metadata': first_analysis['metadata'],
+                'validation_errors': [],
+                'row_validation_results': sheets_preview[0]['row_validation_results'],
+                'sample_rows': sheets_preview[0]['rows'][:10],
+                'can_import': True,
+                'multi_sheet': True,
+                'sheet_count': len(sheets_preview),
+                'sheets': sheets_preview,
+            }
+
     analysis = _analyze_file_bytes(
         user=user,
         filename=uploaded_file.name,
@@ -153,30 +207,54 @@ def list_import_templates():
     return sorted(templates, key=lambda item: item['label'])
 
 
-def ingest_uploaded_file(*, user, uploaded_file, name, source_type, delimiter, encoding, has_header, description, tags, retention_days, required_columns, key_columns, strict_validation, template_id, column_mapping):
+def ingest_uploaded_file(*, user, uploaded_file, name, source_type, delimiter, encoding, has_header, description, tags, retention_days, required_columns, key_columns, strict_validation, template_id, column_mapping, existing_file_path=None):
     file_bytes = _get_uploaded_file_bytes(uploaded_file)
+
+    # Check if this is an Excel file (multi-sheet support)
+    is_excel = source_type == 'excel' or (
+        uploaded_file.name and uploaded_file.name.lower().endswith(('.xlsx', '.xls', '.xlsm'))
+    )
+
+    if is_excel:
+        try:
+            all_sheet_analyses = _analyze_file_bytes_multi_sheet(
+                user=user, filename=uploaded_file.name, file_bytes=file_bytes,
+                source_type='excel', delimiter=delimiter, encoding=encoding,
+                has_header=has_header, required_columns=required_columns,
+                key_columns=key_columns, template_id=template_id,
+                column_mapping=column_mapping,
+            )
+        except IngestionError:
+            # Fallback to single-sheet analysis
+            all_sheet_analyses = None
+
+        if all_sheet_analyses and len(all_sheet_analyses) > 1:
+            return _ingest_multi_sheet(
+                user=user, uploaded_file=uploaded_file, name=name,
+                file_bytes=file_bytes, all_sheet_analyses=all_sheet_analyses,
+                has_header=has_header, description=description, tags=tags,
+                retention_days=retention_days, strict_validation=strict_validation,
+            )
+
+    # Single-sheet path (CSV, JSON, single-sheet Excel fallback)
     analysis = _analyze_file_bytes(
-        user=user,
-        filename=uploaded_file.name,
-        file_bytes=file_bytes,
-        source_type=source_type,
-        delimiter=delimiter,
-        encoding=encoding,
-        has_header=has_header,
-        required_columns=required_columns,
-        key_columns=key_columns,
-        template_id=template_id,
+        user=user, filename=uploaded_file.name, file_bytes=file_bytes,
+        source_type=source_type, delimiter=delimiter, encoding=encoding,
+        has_header=has_header, required_columns=required_columns,
+        key_columns=key_columns, template_id=template_id,
         column_mapping=column_mapping,
     )
 
     if strict_validation and any(error['severity'] == 'error' for error in analysis['validation_errors']):
         raise IngestionError('Strict validation failed. Resolve reported errors before importing.')
 
-    media_root = Path(settings.MEDIA_ROOT)
-    storage = FileSystemStorage(location=media_root / 'ingestion_uploads')
-    stored_name = storage.save(uploaded_file.name, ContentFile(file_bytes))
-    absolute_path = Path(storage.path(stored_name))
-    relative_path = str(Path('ingestion_uploads') / stored_name)
+    if existing_file_path:
+        relative_path = existing_file_path
+    else:
+        media_root = Path(settings.MEDIA_ROOT)
+        storage = FileSystemStorage(location=media_root / 'ingestion_uploads')
+        stored_name = storage.save(uploaded_file.name, ContentFile(file_bytes))
+        relative_path = str(Path('ingestion_uploads') / stored_name)
 
     source = DataSource.objects.create(
         name=name,
@@ -212,6 +290,7 @@ def ingest_uploaded_file(*, user, uploaded_file, name, source_type, delimiter, e
         raw_rows.append(
             RawData(
                 source=source,
+                sheet_name='',
                 row_number=row_number,
                 data=row,
                 data_hash=_hash_row(row),
@@ -222,6 +301,96 @@ def ingest_uploaded_file(*, user, uploaded_file, name, source_type, delimiter, e
         )
 
     RawData.objects.bulk_create(raw_rows)
+    return source
+
+
+def _ingest_multi_sheet(*, user, uploaded_file, name, file_bytes, all_sheet_analyses, has_header, description, tags, retention_days, strict_validation):
+    """
+    Ingest all sheets from a multi-sheet Excel file.
+    Creates one DataSource with multiple DataSourceSheet records.
+    """
+    media_root = Path(settings.MEDIA_ROOT)
+    storage = FileSystemStorage(location=media_root / 'ingestion_uploads')
+    stored_name = storage.save(uploaded_file.name, ContentFile(file_bytes))
+    relative_path = str(Path('ingestion_uploads') / stored_name)
+
+    # Use the first sheet's analysis for DataSource metadata
+    first_analysis = next(iter(all_sheet_analyses.values()))
+    total_rows = sum(a['row_count'] for a in all_sheet_analyses.values())
+
+    has_errors = False
+    all_validation_errors = []
+    for sheet_name, a in all_sheet_analyses.items():
+        for error in a.get('validation_errors', []):
+            all_validation_errors.append({**error, 'sheet_name': sheet_name})
+            if error.get('severity') == 'error':
+                has_errors = True
+
+    source = DataSource.objects.create(
+        name=name,
+        source_type='excel',
+        file_path=relative_path,
+        file_size_bytes=first_analysis['file_size_bytes'],
+        row_count=total_rows,
+        column_count=first_analysis['column_count'],
+        delimiter=first_analysis['delimiter'],
+        encoding=first_analysis['encoding'],
+        has_header=has_header,
+        uploaded_by=user,
+        status='failed' if (strict_validation and has_errors) else 'completed',
+        metadata={
+            'sheet_count': len(all_sheet_analyses),
+            'sheet_names': list(all_sheet_analyses.keys()),
+            'is_multi_sheet': True,
+        },
+        validation_errors=all_validation_errors,
+        checksum_md5=first_analysis['checksum_md5'],
+        retention_days=retention_days,
+        description=description,
+        tags=tags,
+        lineage_info={
+            'source_filename': uploaded_file.name,
+            'ingestion_mode': 'api_upload',
+            'multi_sheet': True,
+        },
+        processed_at=timezone.now(),
+    )
+
+    all_raw_rows = []
+    for sheet_idx, (sheet_name, analysis) in enumerate(all_sheet_analyses.items()):
+        # Create DataSourceSheet record
+        DataSourceSheet.objects.create(
+            source=source,
+            sheet_name=sheet_name,
+            sheet_index=sheet_idx,
+            row_count=analysis['row_count'],
+            column_count=analysis['column_count'],
+            column_names=analysis['columns'],
+            is_active=True,
+            quality_score=analysis['metadata'].get('quality_score'),
+            content_type=analysis['metadata'].get('content_type', ''),
+            metadata=analysis['metadata'],
+        )
+
+        start_row_number = 2 if has_header else 1
+        row_issues = {item['row_number']: item for item in analysis['row_validation_results']}
+        for offset, row in enumerate(analysis['rows']):
+            row_number = start_row_number + offset
+            row_result = row_issues.get(row_number, {'status': 'valid', 'messages': []})
+            all_raw_rows.append(
+                RawData(
+                    source=source,
+                    sheet_name=sheet_name,
+                    row_number=row_number,
+                    data=row,
+                    data_hash=_hash_row(row),
+                    validation_status=row_result['status'],
+                    validation_messages=row_result['messages'],
+                    is_sample=offset < 10,
+                )
+            )
+
+    RawData.objects.bulk_create(all_raw_rows)
     return source
 
 
@@ -334,7 +503,7 @@ def _load_dataframe(*, filename, source_bytes, source_type, delimiter, encoding,
                     encoding=encoding,
                     header=header,
                 )
-                return dataframe, 'csv', resolved_delimiter, resolved_encoding
+                return dataframe, 'csv', resolved_delimiter, encoding
 
             if candidate_type == 'json':
                 dataframe = _read_json_dataframe(source_bytes=source_bytes, encoding=encoding)
@@ -350,6 +519,166 @@ def _load_dataframe(*, filename, source_bytes, source_type, delimiter, encoding,
     if last_error:
         raise last_error
     raise IngestionError(f'Unsupported source_type: {source_type}')
+
+
+def _load_all_excel_sheets(source_bytes, has_header=True):
+    """
+    Load all sheets from an Excel file.
+    Returns dict: {sheet_name: DataFrame}
+    """
+    header = 0 if has_header else None
+    excel_file = pd.ExcelFile(BytesIO(source_bytes))
+    sheets = {}
+    for sheet_name in excel_file.sheet_names:
+        try:
+            df = pd.read_excel(excel_file, sheet_name=sheet_name, header=header)
+            if df is not None and not df.empty:
+                sheets[sheet_name] = df
+        except Exception:
+            continue
+    return sheets
+
+
+def _score_excel_sheet(df):
+    """
+    Score an Excel sheet for data quality (0-100).
+    Reuses logic from nettoyage/loader_service.py.
+    """
+    if df is None or df.empty:
+        return 0, 'vide'
+
+    non_empty_rows = int(df.dropna(how='all').shape[0])
+    non_empty_cols = int(df.dropna(how='all', axis=1).shape[1])
+    total_cells = df.shape[0] * df.shape[1]
+    populated_cells = int(df.notna().sum().sum())
+    populated_ratio = populated_cells / total_cells if total_cells > 0 else 0
+
+    # Numeric ratio
+    numeric_cols = df.select_dtypes(include=['number']).shape[1]
+    numeric_ratio = numeric_cols / non_empty_cols if non_empty_cols > 0 else 0
+
+    # Row width consistency
+    row_lengths = df.notna().sum(axis=1)
+    if len(row_lengths) > 1:
+        consistency = 1 - (row_lengths.std() / row_lengths.mean()) if row_lengths.mean() > 0 else 0
+        consistency = max(0, min(1, consistency))
+    else:
+        consistency = 0.5
+
+    score = 0
+    score += min(non_empty_rows * 2, 25)
+    score += min(non_empty_cols * 4, 24)
+    score += populated_ratio * 16
+    score += consistency * 18
+    score += numeric_ratio * 10
+    score += min(3, df.shape[0] // 10)  # bonus for having data rows
+
+    # Classify content type
+    if numeric_ratio >= 0.4 and non_empty_cols >= 2:
+        content_type = 'tableau_indicateurs'
+    elif populated_ratio >= 0.4 and non_empty_cols >= 3:
+        content_type = 'jeu_de_donnees_structure'
+    elif non_empty_rows <= 3:
+        content_type = 'resume_ou_notes'
+    else:
+        content_type = 'feuille_semistructuree'
+
+    is_data_like = score >= 50 and content_type != 'vide'
+
+    if not is_data_like:
+        score = min(score, 30)
+
+    return round(score, 1), content_type
+
+
+def _analyze_file_bytes_multi_sheet(*, user, filename, file_bytes, source_type, delimiter, encoding, has_header, required_columns, key_columns, template_id, column_mapping):
+    """
+    Analyze an Excel file and return per-sheet analysis.
+    Returns: {sheet_name: analysis_dict} for Excel, or single analysis for other types.
+    """
+    candidate_types = _ordered_source_type_candidates(filename, file_bytes, source_type)
+
+    # Only Excel gets multi-sheet treatment
+    is_excel = any(t == 'excel' for t in candidate_types)
+
+    if not is_excel:
+        # Non-Excel: normal single analysis
+        analysis = _analyze_file_bytes(
+            user=user, filename=filename, file_bytes=file_bytes,
+            source_type=source_type, delimiter=delimiter, encoding=encoding,
+            has_header=has_header, required_columns=required_columns,
+            key_columns=key_columns, template_id=template_id,
+            column_mapping=column_mapping,
+        )
+        return {'__single__': analysis}
+
+    # Excel multi-sheet
+    try:
+        all_sheets = _load_all_excel_sheets(file_bytes, has_header=has_header)
+    except Exception as exc:
+        raise IngestionError(f'Cannot read Excel file: {exc}') from exc
+
+    if not all_sheets:
+        raise IngestionError('Excel file contains no readable sheets')
+
+    checksum_md5 = hashlib.md5(file_bytes).hexdigest()
+    template_config = _resolve_template_config(template_id)
+
+    results = {}
+    for sheet_name, dataframe in all_sheets.items():
+        try:
+            dataframe = _normalize_dataframe_columns(dataframe)
+            dataframe, resolved_mapping = _apply_column_mapping(
+                dataframe, template_config=template_config, column_mapping=column_mapping
+            )
+            dataframe = dataframe.where(pd.notnull(dataframe), None)
+            rows = [_normalize_row(row) for row in dataframe.to_dict(orient='records')]
+            columns = [str(col) for col in dataframe.columns]
+            row_hashes = [_hash_row(row) for row in rows]
+
+            row_validation_results = []
+            for offset, row in enumerate(rows):
+                row_number = (2 if has_header else 1) + offset
+                messages = []
+                status = 'valid'
+                if required_columns:
+                    for col in required_columns:
+                        if col not in row or row[col] is None:
+                            messages.append(f'Missing required column: {col}')
+                            status = 'warning'
+                if key_columns:
+                    key_vals = [row.get(k) for k in key_columns if k in row]
+                    if not any(key_vals):
+                        messages.append('Empty key column(s)')
+                        status = 'warning'
+                row_validation_results.append({'row_number': row_number, 'data': row, 'status': status, 'messages': messages})
+
+            quality_score, content_type = _score_excel_sheet(pd.DataFrame(rows) if rows else None)
+
+            results[sheet_name] = {
+                'filename': filename,
+                'source_type': 'excel',
+                'file_size_bytes': len(file_bytes),
+                'row_count': len(rows),
+                'column_count': len(columns),
+                'delimiter': delimiter,
+                'encoding': encoding,
+                'columns': columns,
+                'rows': rows,
+                'row_validation_results': row_validation_results,
+                'validation_errors': [],
+                'checksum_md5': checksum_md5,
+                'metadata': {
+                    'sheet_name': sheet_name,
+                    'quality_score': quality_score,
+                    'content_type': content_type,
+                    'dtypes': {col: str(dataframe[col].dtype) for col in dataframe.columns if col in dataframe.columns},
+                },
+            }
+        except Exception:
+            continue
+
+    return results
 
 
 def _hash_row(row):
@@ -871,3 +1200,307 @@ def _build_file_read_error_message(filename, source_type):
         f'Impossible de lire "{filename}". '
         'Verifie que le format du fichier correspond bien a son extension.'
     )
+
+
+def suggest_relations(source):
+    """
+    Analyze sheets in a multi-sheet DataSource and suggest possible relationships.
+    Returns a list of dicts: {from_sheet, from_column, to_sheet, to_column, confidence, match_ratio, reason}
+    """
+    # Get sheet names from DB or metadata fallback
+    db_sheet_names = list(DataSourceSheet.objects.filter(source=source).order_by('sheet_index').values_list('sheet_name', flat=True))
+    meta_sheet_names = (source.metadata or {}).get('sheet_names', [])
+    all_sheet_names = db_sheet_names if db_sheet_names else meta_sheet_names
+
+    if len(all_sheet_names) < 2:
+        return []
+
+    sheet_dataframes = {}
+    for sheet_name in all_sheet_names:
+        raw_rows = RawData.objects.filter(source=source, sheet_name=sheet_name).order_by('row_number')[:500]
+        if not raw_rows.exists():
+            continue
+        rows = [r.data for r in raw_rows]
+        if rows:
+            sheet_dataframes[sheet_name] = pd.DataFrame(rows)
+
+    if len(sheet_dataframes) < 2:
+        return []
+
+    suggestions = []
+    sheet_names = list(sheet_dataframes.keys())
+
+    for i, name_a in enumerate(sheet_names):
+        df_a = sheet_dataframes[name_a]
+        cols_a = set(df_a.columns)
+
+        for j, name_b in enumerate(sheet_names):
+            if i >= j:
+                continue
+            df_b = sheet_dataframes[name_b]
+            cols_b = set(df_b.columns)
+
+            for col_a in cols_a:
+                for col_b in cols_b:
+                    suggestion = _evaluate_pair(name_a, df_a, col_a, name_b, df_b, col_b)
+                    if suggestion:
+                        suggestions.append(suggestion)
+
+                    suggestion_rev = _evaluate_pair(name_b, df_b, col_b, name_a, df_a, col_a)
+                    if suggestion_rev:
+                        suggestions.append(suggestion_rev)
+
+    suggestions.sort(key=lambda s: s['confidence'], reverse=True)
+
+    seen = set()
+    unique = []
+    for s in suggestions:
+        key = (s['from_sheet'], s['from_column'], s['to_sheet'], s['to_column'])
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+    return unique
+
+
+def _evaluate_pair(from_name, df_from, from_col, to_name, df_to, to_col):
+    """Evaluate if from_col in sheet_from could be a FK to to_col in sheet_to.
+    
+    Scoring strategy: VALUE OVERLAP is the primary signal (not column names).
+    Two columns with completely different names but 100% value overlap
+    should still be detected as a strong relationship.
+    """
+    vals_from = df_from[from_col].dropna()
+    vals_to = df_to[to_col].dropna()
+
+    if len(vals_from) == 0 or len(vals_to) == 0:
+        return None
+
+    from_set = set(vals_from.astype(str).unique())
+    to_set = set(vals_to.astype(str).unique())
+
+    if not from_set or not to_set:
+        return None
+
+    matched = from_set & to_set
+    match_ratio = len(matched) / len(from_set) if from_set else 0
+
+    if match_ratio < 0.5:
+        return None
+
+    confidence = 0.0
+    reasons = []
+
+    # === PRIMARY SIGNAL: VALUE OVERLAP ===
+    # This is the most important factor — noms importent peu ici
+    is_subset = from_set.issubset(to_set)
+    is_superset = to_set.issubset(from_set)
+    is_equal = from_set == to_set
+
+    if is_equal:
+        confidence += 0.55
+        reasons.append(f'{match_ratio:.0%} value match (identical sets)')
+    elif is_subset:
+        # FK → PK pattern: all values from 'from' exist in 'to'
+        confidence += 0.50
+        reasons.append(f'{match_ratio:.0%} value coverage (subset)')
+    elif is_superset:
+        confidence += 0.45
+        reasons.append(f'{match_ratio:.0%} value coverage (superset)')
+    elif match_ratio >= 0.95:
+        confidence += 0.45
+        reasons.append(f'{match_ratio:.0%} value coverage')
+    elif match_ratio >= 0.80:
+        confidence += 0.35
+        reasons.append(f'{match_ratio:.0%} value coverage')
+    elif match_ratio >= 0.60:
+        confidence += 0.20
+        reasons.append(f'{match_ratio:.0%} value coverage')
+    else:
+        confidence += 0.10
+        reasons.append(f'{match_ratio:.0%} value coverage')
+
+    # === SECONDARY: CARDINALITY MATCH ===
+    # Same number of unique values = strong structural hint
+    from_count = len(from_set)
+    to_count = len(to_set)
+    if from_count == to_count:
+        confidence += 0.15
+        reasons.append('same cardinality')
+    elif from_count > 0 and to_count > 0:
+        ratio = min(from_count, to_count) / max(from_count, to_count)
+        if ratio >= 0.8:
+            confidence += 0.10
+            reasons.append(f'similar cardinality ({from_count} vs {to_count})')
+
+    # === BONUS: NAME SIMILARITY ===
+    # Bonus — not required for detection
+    from_lower = from_col.lower().strip()
+    to_lower = to_col.lower().strip()
+
+    if from_lower == to_lower:
+        confidence += 0.15
+        reasons.append('same column name')
+    elif from_lower in to_lower or to_lower in from_lower:
+        confidence += 0.10
+        reasons.append('column name overlap')
+    else:
+        # Simple Levenshtein-like check
+        dist = _simple_edit_distance(from_lower, to_lower)
+        max_len = max(len(from_lower), len(to_lower))
+        if max_len > 0 and dist <= 3 and dist / max_len < 0.4:
+            confidence += 0.05
+            reasons.append(f'similar names (dist={dist})')
+
+    # === BONUS: TYPE COMPATIBILITY ===
+    try:
+        from_numeric = pd.to_numeric(vals_from, errors='coerce').dropna()
+        to_numeric = pd.to_numeric(vals_to, errors='coerce').dropna()
+        if len(from_numeric) > 0 and len(to_numeric) > 0:
+            confidence += 0.05
+            reasons.append('numeric type match')
+    except Exception:
+        pass
+
+    if confidence < 0.3:
+        return None
+
+    return {
+        'from_sheet': from_name,
+        'from_column': from_col,
+        'to_sheet': to_name,
+        'to_column': to_col,
+        'confidence': round(min(confidence, 1.0), 2),
+        'match_ratio': round(match_ratio, 2),
+        'reason': ' + '.join(reasons),
+    }
+
+
+def _simple_edit_distance(s1, s2):
+    """Simple Levenshtein distance for short strings."""
+    if len(s1) > 30 or len(s2) > 30:
+        return 99
+    if len(s1) == 0:
+        return len(s2)
+    if len(s2) == 0:
+        return len(s1)
+    prev = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr = [i + 1]
+        for j, c2 in enumerate(s2):
+            cost = 0 if c1 == c2 else 1
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + cost))
+        prev = curr
+    return prev[-1]
+
+
+def build_joined_view(source, sheet_names=None, relation_ids=None):
+    """
+    Build a unified view by joining sheets based on defined relations.
+    Returns: {columns: [...], rows: [...], relations_used: [...], join_stats: {...}}
+    """
+    from apps.ingestion.models import SheetRelation
+
+    relations = SheetRelation.objects.filter(source=source, is_active=True)
+    if relation_ids:
+        relations = relations.filter(id__in=relation_ids)
+
+    if not relations.exists():
+        return _build_flat_view(source, sheet_names)
+
+    sheets_to_load = sheet_names or list(
+        relations.values_list('from_sheet', flat=True).union(
+            relations.values_list('to_sheet', flat=True)
+        )
+    )
+
+    sheet_dataframes = {}
+    for sheet_name in sheets_to_load:
+        raw_rows = RawData.objects.filter(source=source, sheet_name=sheet_name).order_by('row_number')
+        if raw_rows.exists():
+            df = pd.DataFrame([r.data for r in raw_rows])
+            df['_sheet_name'] = sheet_name
+            df['_row_id'] = raw_rows.values_list('id', flat=True)
+            df['_row_number'] = raw_rows.values_list('row_number', flat=True)
+            sheet_dataframes[sheet_name] = df
+
+    if not sheet_dataframes:
+        return {'columns': [], 'rows': [], 'relations_used': [], 'join_stats': {}}
+
+    relations_used = []
+    join_stats = {'matched': 0, 'unmatched_source': 0, 'unmatched_target': 0}
+
+    sorted_rels = sorted(relations, key=lambda r: _topological_sort_key(r, relations))
+
+    result_df = None
+    for rel in sorted_rels:
+        df_from = sheet_dataframes.get(rel.from_sheet)
+        df_to = sheet_dataframes.get(rel.to_sheet)
+
+        if df_from is None or df_to is None:
+            continue
+
+        left = result_df if result_df is not None and rel.from_sheet in (result_df['_sheet_name'].unique() if '_sheet_name' in result_df.columns else []) else df_from
+
+        merged = left.merge(
+            df_to,
+            left_on=rel.from_column,
+            right_on=rel.to_column,
+            how='left',
+            suffixes=('', f'_{rel.to_sheet}'),
+            indicator=True,
+        )
+
+        matched_count = (merged['_merge'] == 'both').sum()
+        unmatched_source = (merged['_merge'] == 'left_only').sum()
+        join_stats['matched'] += int(matched_count)
+        join_stats['unmatched_source'] += int(unmatched_source)
+
+        merged.drop(columns=['_merge'], inplace=True)
+        result_df = merged
+        relations_used.append(f'{rel.from_sheet}.{rel.from_column} → {rel.to_sheet}.{rel.to_column}')
+
+    if result_df is None:
+        return {'columns': [], 'rows': [], 'relations_used': [], 'join_stats': {}}
+
+    display_cols = [c for c in result_df.columns if not c.startswith('_merge')]
+    rows = result_df[display_cols].fillna('').to_dict(orient='records')
+
+    return {
+        'columns': display_cols,
+        'rows': rows,
+        'relations_used': relations_used,
+        'join_stats': join_stats,
+        'total_rows': len(rows),
+    }
+
+
+def _build_flat_view(source, sheet_names=None):
+    """Fallback: concatenate all rows without joins."""
+    qs = RawData.objects.filter(source=source)
+    if sheet_names:
+        qs = qs.filter(sheet_name__in=sheet_names)
+
+    rows_data = list(qs.values_list('data', flat=True).order_by('sheet_name', 'row_number'))
+    if not rows_data:
+        return {'columns': [], 'rows': [], 'relations_used': [], 'join_stats': {}}
+
+    all_cols = set()
+    for row in rows_data:
+        all_cols.update(row.keys())
+    columns = sorted(all_cols)
+
+    return {
+        'columns': columns,
+        'rows': rows_data,
+        'relations_used': [],
+        'join_stats': {'total_rows': len(rows_data)},
+        'total_rows': len(rows_data),
+    }
+
+
+def _topological_sort_key(relation, all_relations):
+    """Simple topological sort: target sheets come before source sheets."""
+    targets = set(r.to_sheet for r in all_relations)
+    if relation.from_sheet in targets:
+        return 0
+    return 1

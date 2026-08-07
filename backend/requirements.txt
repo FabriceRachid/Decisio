@@ -42,4 +42,8 @@ pytz>=2023.0  # Timezone support
 thefuzz>=0.22.1
 python-Levenshtein>=0.21.1
 reportlab>=4.0.0  # PDF generation
-requests>=2.31.0  # HTTP client for webhooks
+
+# ==================== STRUCTURE DETECTION (M2 Enhancement) ====================
+pgvector>=0.3.0  # Vector similarity search in PostgreSQL
+sentence-transformers>=3.0.0  # Local embeddings for correction memory
+pandera>=0.20.0  # Validation gates for data quality

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.ingestion.models import DataSource, RawData, IngestionJob
+from apps.ingestion.models import DataSource, RawData, IngestionJob, DataSourceSheet, SheetRelation
 
 
 class DataSourceListSerializer(serializers.ModelSerializer):
@@ -30,6 +30,7 @@ class RawDataSerializer(serializers.ModelSerializer):
         model = RawData
         fields = [
             'row_number',
+            'sheet_name',
             'data',
             'validation_status',
             'validation_messages',
@@ -37,9 +38,28 @@ class RawDataSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class DataSourceSheetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DataSourceSheet
+        fields = [
+            'id',
+            'sheet_name',
+            'sheet_index',
+            'row_count',
+            'column_count',
+            'column_names',
+            'is_active',
+            'quality_score',
+            'content_type',
+            'metadata',
+        ]
+        read_only_fields = fields
+
+
 class DataSourceDetailSerializer(serializers.ModelSerializer):
     uploaded_by_username = serializers.CharField(source='uploaded_by.username', read_only=True)
     sample_rows = serializers.SerializerMethodField()
+    sheets = serializers.SerializerMethodField()
 
     class Meta:
         model = DataSource
@@ -70,12 +90,47 @@ class DataSourceDetailSerializer(serializers.ModelSerializer):
             'updated_at',
             'processed_at',
             'sample_rows',
+            'sheets',
         ]
         read_only_fields = fields
 
     def get_sample_rows(self, obj):
         rows = obj.raw_data_rows.order_by('row_number')[:10]
         return RawDataSerializer(rows, many=True).data
+
+    def get_sheets(self, obj):
+        sheets = obj.sheets.all()
+        if sheets.exists():
+            return DataSourceSheetSerializer(sheets, many=True).data
+        # Fallback: build sheet list from metadata (for sources imported before SheetRelation feature)
+        meta = obj.metadata or {}
+        sheet_names = meta.get('sheet_names') or []
+        if len(sheet_names) > 1:
+            raw_data = obj.raw_data_rows.all()
+            sheet_counts = {}
+            sheet_columns = {}
+            for row in raw_data:
+                sn = row.sheet_name or ''
+                sheet_counts[sn] = sheet_counts.get(sn, 0) + 1
+                if sn not in sheet_columns:
+                    sheet_columns[sn] = set()
+                    sheet_columns[sn].update(row.data.keys() if row.data else [])
+            result = []
+            for idx, name in enumerate(sheet_names):
+                result.append({
+                    'id': idx,
+                    'sheet_name': name,
+                    'sheet_index': idx,
+                    'row_count': sheet_counts.get(name, 0),
+                    'column_count': len(sheet_columns.get(name, set())),
+                    'column_names': sorted(sheet_columns.get(name, set())),
+                    'is_active': True,
+                    'quality_score': None,
+                    'content_type': '',
+                    'metadata': {},
+                })
+            return result
+        return []
 
 
 class IngestionRequestSerializer(serializers.Serializer):
@@ -181,3 +236,51 @@ class DataSourceUpdateSerializer(serializers.ModelSerializer):
         if value < 1 or value > 3650:
             raise serializers.ValidationError("Retention days must be between 1 and 3650")
         return value
+
+
+class SheetRelationSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = SheetRelation
+        fields = [
+            'id',
+            'relation_name',
+            'from_sheet',
+            'from_column',
+            'to_sheet',
+            'to_column',
+            'join_type',
+            'is_active',
+            'confidence',
+            'match_ratio',
+            'created_by',
+            'created_by_username',
+            'metadata',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'confidence', 'match_ratio', 'created_by', 'created_at', 'updated_at']
+
+
+class RelationSuggestionSerializer(serializers.Serializer):
+    from_sheet = serializers.CharField()
+    from_column = serializers.CharField()
+    to_sheet = serializers.CharField()
+    to_column = serializers.CharField()
+    confidence = serializers.FloatField()
+    match_ratio = serializers.FloatField()
+    reason = serializers.CharField()
+
+
+class JoinedViewRequestSerializer(serializers.Serializer):
+    sheet_names = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=None,
+    )
+    relation_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        default=None,
+    )

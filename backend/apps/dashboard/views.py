@@ -18,6 +18,7 @@ from apps.dashboard.serializers import (
 from apps.dashboard.services import auto_build_dashboard, add_widget_to_dashboard, build_business_rankings, default_preferences_for_role
 from apps.kpi.serializers import DashboardPreviewRequestSerializer
 from apps.kpi.services import M4WorkbenchService
+from apps.conflits.audit import log_activity
 
 
 class DashboardAnalyticsAPIView(APIView):
@@ -51,10 +52,41 @@ class DashboardViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         name = serializer.validated_data.get('name', '')
-        serializer.save(
+        dashboard = serializer.save(
             created_by=self.request.user,
             slug=serializer.validated_data.get('slug') or slugify(name) or f'dashboard-{self.request.user.id}',
         )
+        log_activity(
+            action_type='create',
+            resource_type='Dashboard',
+            resource_id=dashboard.id,
+            resource_name=dashboard.name,
+            user=self.request.user,
+            request=self.request,
+        )
+
+    def perform_update(self, serializer):
+        dashboard = serializer.save()
+        log_activity(
+            action_type='update',
+            resource_type='Dashboard',
+            resource_id=dashboard.id,
+            resource_name=dashboard.name,
+            user=self.request.user,
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        log_activity(
+            action_type='delete',
+            resource_type='Dashboard',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=self.request.user,
+            request=self.request,
+            risk_score=30,
+        )
+        instance.delete()
 
 
 class WidgetViewSet(viewsets.ModelViewSet):
@@ -100,6 +132,42 @@ class WidgetViewSet(viewsets.ModelViewSet):
             qs = qs.filter(title__icontains=search)
 
         return qs
+
+    def perform_create(self, serializer):
+        widget = serializer.save()
+        log_activity(
+            action_type='create',
+            resource_type='Widget',
+            resource_id=widget.id,
+            resource_name=widget.title or widget.name or f'Widget {widget.id}',
+            details={'dashboard_id': widget.dashboard_id, 'widget_type': widget.widget_type},
+            user=self.request.user,
+            request=self.request,
+        )
+
+    def perform_update(self, serializer):
+        widget = serializer.save()
+        log_activity(
+            action_type='update',
+            resource_type='Widget',
+            resource_id=widget.id,
+            resource_name=widget.title or widget.name or f'Widget {widget.id}',
+            details={'dashboard_id': widget.dashboard_id},
+            user=self.request.user,
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        log_activity(
+            action_type='delete',
+            resource_type='Widget',
+            resource_id=instance.id,
+            resource_name=instance.title or instance.name or f'Widget {instance.id}',
+            details={'dashboard_id': instance.dashboard_id},
+            user=self.request.user,
+            request=self.request,
+        )
+        instance.delete()
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, CanWriteData])
     def reorder(self, request):

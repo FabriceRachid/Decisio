@@ -17,6 +17,8 @@ class Organization(models.Model):
     sector = models.CharField(max_length=120, blank=True, null=True)
     size = models.CharField(max_length=50, blank=True, null=True)
     country = models.CharField(max_length=120, blank=True, null=True)
+    logo = models.ImageField(upload_to='organization_logos/', null=True, blank=True)
+    brand_color = models.CharField(max_length=20, blank=True, null=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='organizations_created')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

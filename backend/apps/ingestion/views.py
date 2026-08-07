@@ -16,7 +16,7 @@ import uuid
 import logging
 
 from apps.authentication.permissions import CanReadData, CanWriteData
-from apps.ingestion.models import DataSource, IngestionJob, RawData
+from apps.ingestion.models import DataSource, IngestionJob, RawData, SheetRelation, DataSourceSheet
 from apps.ingestion.serializers import (
     DataSourceDetailSerializer,
     DataSourceListSerializer,
@@ -25,9 +25,12 @@ from apps.ingestion.serializers import (
     IngestionJobSerializer,
     RawDataSerializer,
     DataSourceUpdateSerializer,
+    SheetRelationSerializer,
+    JoinedViewRequestSerializer,
 )
+from apps.conflits.audit import log_activity
 from apps.ingestion.services import IngestionError, ingest_uploaded_file, preview_uploaded_file
-from apps.ingestion.services import list_import_templates
+from apps.ingestion.services import list_import_templates, suggest_relations, build_joined_view
 from apps.ingestion.tasks import process_ingestion_async
 
 logger = logging.getLogger(__name__)
@@ -157,6 +160,16 @@ class DataSourceDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+
+        log_activity(
+            action_type='update',
+            resource_type='DataSource',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=request.user,
+            request=request,
+            status_code=status.HTTP_200_OK,
+        )
         
         return Response(DataSourceDetailSerializer(instance).data, status=status.HTTP_200_OK)
     
@@ -174,6 +187,16 @@ class DataSourceDetailView(generics.RetrieveUpdateDestroyAPIView):
         # Soft delete - just archive
         instance.is_archived = True
         instance.save()
+
+        log_activity(
+            action_type='delete',
+            resource_type='DataSource',
+            resource_id=instance.id,
+            resource_name=instance.name,
+            user=request.user,
+            request=request,
+            status_code=status.HTTP_204_NO_CONTENT,
+        )
         
         return Response(
             {'message': f'Source {instance.name} has been archived.'},
@@ -217,6 +240,16 @@ class DataSourceUploadView(APIView):
             )
         except IngestionError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_activity(
+            action_type='import',
+            resource_type='DataSource',
+            resource_id=source.id,
+            resource_name=source.name,
+            user=request.user,
+            request=request,
+            status_code=status.HTTP_201_CREATED,
+        )
 
         response_serializer = DataSourceDetailSerializer(source)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
@@ -270,59 +303,65 @@ class DataSourceAsyncUploadView(APIView):
             'column_mapping': serializer.validated_data.get('column_mapping', {}),
         }
 
+        # Always run synchronously — Celery worker is not running
         try:
-            task = process_ingestion_async.delay(**task_kwargs)
-        except Exception as exc:
-            logger.exception('Failed to enqueue ingestion job #%s, falling back to sync mode.', job.id)
-            try:
-                file_full_path = media_root / 'ingestion_uploads' / stored_name
-                with open(file_full_path, 'rb') as handle:
-                    file_bytes = handle.read()
+            file_full_path = media_root / 'ingestion_uploads' / stored_name
+            with open(file_full_path, 'rb') as handle:
+                file_bytes = handle.read()
 
-                source = ingest_uploaded_file(
-                    user=request.user,
-                    uploaded_file=SimpleUploadedFile(
-                        name=uploaded_file.name,
-                        content=file_bytes,
-                        content_type=getattr(uploaded_file, 'content_type', 'application/octet-stream'),
-                    ),
-                    name=serializer.validated_data['name'],
-                    source_type=serializer.validated_data['source_type'],
-                    delimiter=serializer.validated_data['delimiter'],
-                    encoding=serializer.validated_data['encoding'],
-                    has_header=serializer.validated_data['has_header'],
-                    description=serializer.validated_data.get('description'),
-                    tags=serializer.validated_data.get('tags', []),
-                    retention_days=serializer.validated_data['retention_days'],
-                    required_columns=serializer.validated_data.get('required_columns', []),
-                    key_columns=serializer.validated_data.get('key_columns', []),
-                    strict_validation=serializer.validated_data['strict_validation'],
-                    template_id=serializer.validated_data.get('template_id'),
-                    column_mapping=serializer.validated_data.get('column_mapping', {}),
-                )
-            except IngestionError as ingestion_exc:
-                job.status = 'failed'
-                job.error_message = str(ingestion_exc)
-                job.save(update_fields=['status', 'error_message'])
-                return Response({'error': str(ingestion_exc)}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception as fallback_exc:
-                logger.exception('Unexpected sync fallback failure for ingestion job #%s.', job.id)
-                job.status = 'failed'
-                job.error_message = str(fallback_exc)
-                job.save(update_fields=['status', 'error_message'])
-                return Response(
-                    {'error': str(fallback_exc) or 'Une erreur inattendue est survenue pendant l import.'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
+            relative_path = str(Path('ingestion_uploads') / stored_name)
+            source = ingest_uploaded_file(
+                user=request.user,
+                uploaded_file=SimpleUploadedFile(
+                    name=uploaded_file.name,
+                    content=file_bytes,
+                    content_type=getattr(uploaded_file, 'content_type', 'application/octet-stream'),
+                ),
+                name=serializer.validated_data['name'],
+                source_type=serializer.validated_data['source_type'],
+                delimiter=serializer.validated_data['delimiter'],
+                encoding=serializer.validated_data['encoding'],
+                has_header=serializer.validated_data['has_header'],
+                description=serializer.validated_data.get('description'),
+                tags=serializer.validated_data.get('tags', []),
+                retention_days=serializer.validated_data['retention_days'],
+                required_columns=serializer.validated_data.get('required_columns', []),
+                key_columns=serializer.validated_data.get('key_columns', []),
+                strict_validation=serializer.validated_data['strict_validation'],
+                template_id=serializer.validated_data.get('template_id'),
+                column_mapping=serializer.validated_data.get('column_mapping', {}),
+                existing_file_path=relative_path,
+            )
+        except IngestionError as ingestion_exc:
+            job.status = 'failed'
+            job.error_message = str(ingestion_exc)
+            job.save(update_fields=['status', 'error_message'])
+            return Response({'error': str(ingestion_exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as fallback_exc:
+            logger.exception('Unexpected sync failure for ingestion job #%s.', job.id)
+            job.status = 'failed'
+            job.error_message = str(fallback_exc)
+            job.save(update_fields=['status', 'error_message'])
+            return Response(
+                {'error': str(fallback_exc) or 'Une erreur inattendue est survenue pendant l import.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-            job.status = 'completed'
-            job.progress_percent = 100
-            job.source = source
-            job.error_message = None
-            job.save(update_fields=['status', 'progress_percent', 'source', 'error_message'])
-        else:
-            job.celery_task_id = task.id
-            job.save(update_fields=['celery_task_id'])
+        job.status = 'completed'
+        job.progress_percent = 100
+        job.source = source
+        job.error_message = None
+        job.save(update_fields=['status', 'progress_percent', 'source', 'error_message'])
+
+        log_activity(
+            action_type='import',
+            resource_type='DataSource',
+            resource_id=job.id,
+            resource_name=serializer.validated_data['name'],
+            user=request.user,
+            request=request,
+            status_code=status.HTTP_202_ACCEPTED,
+        )
 
         serializer = IngestionJobSerializer(job)
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
@@ -351,6 +390,9 @@ class RawDataListView(generics.ListAPIView):
         validation_status = self.request.query_params.get('status')
         if validation_status:
             queryset = queryset.filter(validation_status=validation_status)
+        sheet_name = self.request.query_params.get('sheet_name')
+        if sheet_name:
+            queryset = queryset.filter(sheet_name=sheet_name)
         return queryset.order_by('row_number')
 
 
@@ -413,3 +455,105 @@ class DataSourcePreviewView(APIView):
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(result, status=status.HTTP_200_OK)
+
+
+class SheetRelationListView(generics.ListAPIView):
+    """
+    List relations for a source.
+    GET /api/ingestion/sources/<id>/relations/
+    """
+    serializer_class = SheetRelationSerializer
+    permission_classes = [CanReadData]
+
+    def get_queryset(self):
+        return SheetRelation.objects.filter(source_id=self.kwargs['pk']).select_related('created_by')
+
+
+class SheetRelationCreateView(APIView):
+    """
+    Create a relation between two sheets.
+    POST /api/ingestion/sources/<id>/relations/
+    """
+    permission_classes = [CanWriteData]
+
+    def post(self, request, pk):
+        source = _get_source_or_404(pk, request.user)
+        serializer = SheetRelationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Check sheets from DB or metadata fallback
+        db_sheets = set(DataSourceSheet.objects.filter(source=source).values_list('sheet_name', flat=True))
+        meta_sheets = set((source.metadata or {}).get('sheet_names', []))
+        all_sheets = db_sheets | meta_sheets
+        from_sheet = serializer.validated_data['from_sheet']
+        to_sheet = serializer.validated_data['to_sheet']
+
+        if from_sheet not in all_sheets:
+            return Response({'error': f'La feuille "{from_sheet}" n\'existe pas dans cette source.'}, status=status.HTTP_400_BAD_REQUEST)
+        if to_sheet not in all_sheets:
+            return Response({'error': f'La feuille "{to_sheet}" n\'existe pas dans cette source.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        relation = serializer.save(source=source, created_by=request.user)
+        return Response(SheetRelationSerializer(relation).data, status=status.HTTP_201_CREATED)
+
+
+class SheetRelationDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Get, update, or delete a relation.
+    GET/PATCH/DELETE /api/ingestion/sources/<source_id>/relations/<relation_id>/
+    """
+    serializer_class = SheetRelationSerializer
+    permission_classes = [CanWriteData]
+
+    def get_queryset(self):
+        return SheetRelation.objects.filter(source_id=self.kwargs['source_pk'])
+
+    def get_object(self):
+        obj = generics.RetrieveUpdateDestroyAPIView.get_object(self)
+        if obj.source.uploaded_by != self.request.user and not self.request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Not authorized.')
+        return obj
+
+
+class SuggestRelationsView(APIView):
+    """
+    Auto-detect possible relations between sheets.
+    GET /api/ingestion/sources/<id>/suggest-relations/
+    """
+    permission_classes = [CanReadData]
+
+    def get(self, request, pk):
+        source = _get_source_or_404(pk, request.user)
+        suggestions = suggest_relations(source)
+        return Response({'suggestions': suggestions})
+
+
+class JoinedViewView(APIView):
+    """
+    Build a unified view by joining sheets.
+    POST /api/ingestion/sources/<id>/joined-view/
+    """
+    permission_classes = [CanReadData]
+
+    def post(self, request, pk):
+        source = _get_source_or_404(pk, request.user)
+        serializer = JoinedViewRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = build_joined_view(
+            source,
+            sheet_names=serializer.validated_data.get('sheet_names'),
+            relation_ids=serializer.validated_data.get('relation_ids'),
+        )
+        return Response(result)
+
+
+def _get_source_or_404(pk, user):
+    from django.shortcuts import get_object_or_404
+    source = get_object_or_404(DataSource, pk=pk)
+    accessible = _organization_scoped_sources(DataSource.objects.filter(pk=pk), user)
+    if not accessible.exists():
+        from rest_framework.exceptions import NotFound
+        raise NotFound('Data source not found.')
+    return source

@@ -12,6 +12,8 @@ import logging
 from apps.ingestion.models import DataSource, RawData, IngestionJob
 from apps.ingestion.services import (
     ingest_uploaded_file,
+    _analyze_file_bytes_multi_sheet,
+    _ingest_multi_sheet,
     IngestionError,
 )
 
@@ -81,8 +83,43 @@ def process_ingestion_async(
         from apps.ingestion.services import (
             _analyze_file_bytes,
             _build_preview_response,
+            _get_uploaded_file_bytes,
         )
-        
+
+        # Check if this is an Excel file (multi-sheet support)
+        is_excel = source_type == 'excel' or (
+            uploaded_file.name and uploaded_file.name.lower().endswith(('.xlsx', '.xls', '.xlsm'))
+        )
+
+        if is_excel:
+            try:
+                all_sheet_analyses = _analyze_file_bytes_multi_sheet(
+                    user=user, filename=uploaded_file.name, file_bytes=file_bytes,
+                    source_type='excel', delimiter=delimiter, encoding=encoding,
+                    has_header=has_header, required_columns=required_columns,
+                    key_columns=key_columns, template_id=template_id,
+                    column_mapping=column_mapping,
+                )
+            except Exception:
+                all_sheet_analyses = None
+
+            if all_sheet_analyses and len(all_sheet_analyses) > 1:
+                # Multi-sheet ingestion
+                source = _ingest_multi_sheet(
+                    user=user, uploaded_file=uploaded_file, name=source_name,
+                    file_bytes=file_bytes, all_sheet_analyses=all_sheet_analyses,
+                    has_header=has_header, description=description, tags=tags,
+                    retention_days=retention_days, strict_validation=strict_validation,
+                )
+                job.status = 'completed'
+                job.source = source
+                job.completed_at = timezone.now()
+                job.progress_percent = 100
+                job.save()
+                logger.info(f"Ingestion job {job_id} completed (multi-sheet). Source ID: {source.id}")
+                return {'status': 'success', 'source_id': source.id, 'row_count': source.row_count, 'sheet_count': len(all_sheet_analyses)}
+
+        # Single-sheet path (fallback)
         analysis = _analyze_file_bytes(
             user=user,
             filename=uploaded_file.name,
@@ -140,6 +177,7 @@ def process_ingestion_async(
             raw_rows.append(
                 RawData(
                     source=source,
+                    sheet_name='',
                     row_number=row_number,
                     data=row,
                     data_hash=_hash_row(row),
