@@ -88,3 +88,4 @@ backend/temp.ipynb
 .sixth/
 .tanstack/
 .wrangler/
+django_log.txt
