@@ -184,8 +184,7 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # For production collectstatic
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Frontend SPA build (decision-spark/dist/client)
-SPA_DIR = BASE_DIR.parent / 'decision-spark' / 'dist' / 'client'
+SPA_DIR = BASE_DIR / 'frontend'
 SPA_ASSETS_DIR = SPA_DIR / 'assets'
 
 STATICFILES_DIRS = [

@@ -40,7 +40,7 @@ if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Serve frontend SPA in production
-SPA_DIR = settings.BASE_DIR.parent / 'decision-spark' / 'dist' / 'client'
+SPA_DIR = settings.BASE_DIR / 'frontend'
 if SPA_DIR.exists():
     from django.views.static import serve as static_serve
 
