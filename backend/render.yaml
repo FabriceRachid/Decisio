@@ -1,0 +1,73 @@
+services:
+  - type: web
+    name: decisio-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python manage.py migrate && python manage.py install_pgvector && python manage.py collectstatic --noinput
+    startCommand: gunicorn decisiobi.wsgi:application --bind 0.0.0.0:$PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "decisio-backend.onrender.com"
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FRONTEND_BASE_URL
+        value: "https://VOTRE-frontend.vercel.app"
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://VOTRE-frontend.vercel.app"
+
+  - type: worker
+    name: decisio-celery-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A decisiobi worker -l info --concurrency=2
+    envVars:
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: decisio-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: decisio-redis
+          property: connectionString
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+
+  - type: cron
+    name: decisio-celery-beat
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A decisiobi beat -l info
+    envVars:
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: decisio-redis
+          property: connectionString
+
+  - type: redis
+    name: decisio-redis
+    plan: free
+    ipAllowList: []
