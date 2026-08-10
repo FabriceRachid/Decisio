@@ -28,12 +28,6 @@ services:
         value: "https://VOTRE-frontend.vercel.app"
       - key: CORS_ALLOWED_ORIGINS
         value: "https://VOTRE-frontend.vercel.app"
-      - key: SUPERUSER_USERNAME
-        value: "admin"
-      - key: SUPERUSER_EMAIL
-        value: "admin@decisiobi.com"
-      - key: SUPERUSER_PASSWORD
-        value: "admin123"
 
   - type: worker
     name: decisio-celery-worker
