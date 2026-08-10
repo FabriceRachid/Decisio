@@ -1,0 +1,4 @@
+[submodule "decision-spark"]
+	path = decision-spark
+	url = https://github.com/FabriceRachid/decision-spark.git
+	branch = main
