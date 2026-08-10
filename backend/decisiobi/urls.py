@@ -15,9 +15,11 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.generic import TemplateView
+import os
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -36,3 +38,20 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve frontend SPA in production
+SPA_DIR = settings.BASE_DIR.parent / 'decision-spark' / 'dist' / 'client'
+if SPA_DIR.exists():
+    from django.views.static import serve as static_serve
+
+    def serve_spa(request, path=''):
+        index = SPA_DIR / 'index.html'
+        if index.exists():
+            return static_serve(request, str(path or 'index.html'), document_root=str(SPA_DIR))
+        from django.http import HttpResponseNotFound
+        return HttpResponseNotFound('Frontend not built')
+
+    urlpatterns += [
+        re_path(r'^(?:assets/.*)$', lambda req, path='': static_serve(req, path, document_root=str(SPA_DIR / 'assets'))),
+        re_path(r'^(?!api/|admin/|media/|static/).*$', serve_spa),
+    ]

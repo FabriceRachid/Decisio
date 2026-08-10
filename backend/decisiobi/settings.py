@@ -183,9 +183,17 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # For production collectstatic
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Frontend SPA build (decision-spark/dist/client)
+SPA_DIR = BASE_DIR.parent / 'decision-spark' / 'dist' / 'client'
+SPA_ASSETS_DIR = SPA_DIR / 'assets'
+
 STATICFILES_DIRS = [
-    BASE_DIR / 'static',  # Additional static files directory
+    BASE_DIR / 'static',
 ] if (BASE_DIR / 'static').exists() else []
+
+if SPA_ASSETS_DIR.exists():
+    STATICFILES_DIRS.append(SPA_ASSETS_DIR)
 
 # Media files (user uploads)
 MEDIA_URL = '/media/'
