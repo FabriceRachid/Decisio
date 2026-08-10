@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 username = 'admin'
-email = 'admin@decisiobi.com'
+email = 'fabricerachidramde2@gmail.com'
 password = 'Decisio2026!'
 
 if User.objects.filter(username=username).exists():
