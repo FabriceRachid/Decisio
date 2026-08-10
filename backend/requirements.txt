@@ -31,6 +31,7 @@ django-celery-beat>=2.5.0
 
 # ==================== DEPLOYMENT ====================
 gunicorn>=22.0.0
+whitenoise>=6.7.0
 
 # ==================== TESTING ====================
 pytest>=7.4.0
