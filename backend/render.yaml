@@ -3,7 +3,7 @@ services:
     name: decisio-backend
     runtime: python
     plan: free
-    buildCommand: git submodule update --init --recursive && chmod +x build_frontend.sh && bash build_frontend.sh && cd backend && pip install -r requirements.txt && python manage.py migrate && python manage.py install_pgvector && python manage.py collectstatic --noinput && python create_superuser.py
+    buildCommand: cd backend && pip install -r requirements.txt && python manage.py migrate && python manage.py install_pgvector && python manage.py collectstatic --noinput && python create_superuser.py
     startCommand: cd backend && gunicorn decisiobi.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
@@ -27,45 +27,16 @@ services:
       - key: GROQ_API_KEY
         sync: false
 
-  - type: worker
-    name: decisio-celery-worker
-    runtime: python
+  - type: web
+    name: decisio-frontend
+    runtime: node
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A decisiobi worker -l info --concurrency=2
+    buildCommand: git submodule update --init --recursive && cd decision-spark && npm install && npm run build
+    startCommand: cd decision-spark && node server-node.mjs
     envVars:
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: decisio-redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          name: decisio-redis
-          property: connectionString
-      - key: DB_NAME
-        sync: false
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: DB_HOST
-        sync: false
-      - key: GROQ_API_KEY
-        sync: false
-
-  - type: cron
-    name: decisio-celery-beat
-    runtime: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A decisiobi beat -l info
-    envVars:
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: decisio-redis
-          property: connectionString
-
-  - type: redis
-    name: decisio-redis
-    plan: free
-    ipAllowList: []
+      - key: NODE_VERSION
+        value: "20"
+      - key: PORT
+        value: "3000"
+      - key: VITE_API_BASE_URL
+        value: ""
