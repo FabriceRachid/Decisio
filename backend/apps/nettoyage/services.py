@@ -1275,6 +1275,43 @@ def _apply_single_rule(*, dataframe, rule):
         }
         id_vars = mapping['colonnes_identifiantes']
         value_vars = mapping['colonnes_valeurs']
+
+        col_positions = {col: i for i, col in enumerate(working.columns)}
+        data_cols = [column for column in working.columns if column != '_row_number']
+
+        def _resolve_by_position(cols: list[str], indices: list[int], data_cols: list[str]) -> list[str]:
+            resolved = []
+            for name, idx in zip(cols, indices):
+                if name in working.columns:
+                    resolved.append(name)
+                elif name.startswith('col_') and len(data_cols) > 1 and idx < len(data_cols):
+                    resolved.append(data_cols[idx])
+                elif idx < len(data_cols):
+                    resolved.append(data_cols[idx])
+                else:
+                    resolved.append(name)
+            return resolved
+
+        if value_col_indices and value_vars and len(value_col_indices) == len(value_vars):
+            mapping['colonnes_valeurs'] = _resolve_by_position(value_vars, value_col_indices, data_cols)
+            value_vars = mapping['colonnes_valeurs']
+        else:
+            mapping['colonnes_valeurs'] = _resolve_by_position(value_vars, list(range(len(value_vars))), data_cols)
+            value_vars = mapping['colonnes_valeurs']
+
+        if id_vars:
+            resolved_id_vars = []
+            for name in id_vars:
+                if name in working.columns:
+                    resolved_id_vars.append(name)
+                elif name.startswith('col_'):
+                    idx = int(name.split('_')[1])
+                    resolved_id_vars.append(data_cols[idx] if idx < len(data_cols) else name)
+                else:
+                    resolved_id_vars.append(name)
+            mapping['colonnes_identifiantes'] = resolved_id_vars
+            id_vars = resolved_id_vars
+
         missing = [c for c in id_vars + value_vars if c not in working.columns]
         if missing:
             raise CleaningError(f'unpivot: colonnes manquantes: {missing}. Colonnes dispo: {list(working.columns)[:10]}')

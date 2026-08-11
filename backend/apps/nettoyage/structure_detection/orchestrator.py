@@ -249,6 +249,7 @@ class StructureDetectionOrchestrator:
                 raw_header_rows = fp._sample_data.get('raw_header_rows', [])
 
             id_var_names = []
+            value_var_names = []
             header_row_idx = hc.get('header_rows', [0])[-1] if hc.get('header_rows') else 0
             for kc in key_cols:
                 name = None
@@ -257,6 +258,13 @@ class StructureDetectionOrchestrator:
                     if val and str(val).strip():
                         name = str(val).strip()
                 id_var_names.append(name or f'col_{kc}')
+            for vc in value_cols:
+                name = None
+                if header_row_idx < len(raw_header_rows) and vc < len(raw_header_rows[header_row_idx]):
+                    val = raw_header_rows[header_row_idx][vc]
+                    if val and str(val).strip():
+                        name = str(val).strip()
+                value_var_names.append(name or f'col_{vc}')
 
             dim_headers = hc.get('dim_headers', [])
             id_set = set(id_var_names)
@@ -264,7 +272,7 @@ class StructureDetectionOrchestrator:
 
             mapping_pivot = {
                 'colonnes_identifiantes': id_var_names,
-                'colonnes_valeurs': [f'col_{vc}' for vc in value_cols],
+                'colonnes_valeurs': value_var_names,
                 'nom_nouvelle_colonne_dimension': ' | '.join(dim_names) if dim_names else 'Dimension',
                 'nom_nouvelle_colonne_valeur': 'Montant',
                 'header_row_index': hc.get('header_rows', [0])[-1] if hc.get('header_rows') else 0,
