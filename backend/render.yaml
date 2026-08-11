@@ -3,7 +3,7 @@ services:
     name: decisio-backend
     runtime: python
     plan: free
-    buildCommand: git submodule update --init --recursive && cd decision-spark && npm install && npm run build && cd .. && ENTRY_JS=$(basename $(ls decision-spark/dist/client/assets/index-*.js | head -1)) && printf '<!DOCTYPE html>\n<html lang="fr">\n<head>\n<meta charset="utf-8" />\n<meta name="viewport" content="width=device-width, initial-scale=1" />\n<title>DécisioBI</title>\n<link rel="icon" type="image/png" href="/favicon.png" />\n</head>\n<body>\n<div id="root"></div>\n<script type="module" src="/assets/'"$ENTRY_JS"'"></script>\n</body>\n</html>' > decision-spark/dist/client/index.html && mkdir -p backend/frontend && cp -r decision-spark/dist/client/* backend/frontend/ && cd backend && pip install -r requirements.txt && python manage.py migrate && python manage.py install_pgvector && python manage.py collectstatic --noinput && python create_superuser.py
+    buildCommand: git submodule update --init --recursive && chmod +x build_frontend.sh && bash build_frontend.sh && cd backend && pip install -r requirements.txt && python manage.py migrate && python manage.py install_pgvector && python manage.py collectstatic --noinput && python create_superuser.py
     startCommand: cd backend && gunicorn decisiobi.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
