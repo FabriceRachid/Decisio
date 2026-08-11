@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: decisio-app
+    runtime: python
+    plan: free
+    buildCommand: cd backend && pip install -r requirements.txt && python manage.py migrate && python manage.py install_pgvector && python manage.py collectstatic --noinput && python create_superuser.py && cd ../decision-spark && npm install && npm run build
+    startCommand: bash start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.13"
+      - key: NODE_VERSION
+        value: "20"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: VITE_API_BASE_URL
+        value: "http://127.0.0.1:8000"
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: GROQ_API_KEY
+        sync: false

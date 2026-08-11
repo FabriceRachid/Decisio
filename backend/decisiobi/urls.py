@@ -15,7 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
@@ -42,3 +42,25 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+SPA_DIR = settings.BASE_DIR / 'frontend'
+if SPA_DIR.exists():
+    from django.http import FileResponse, HttpResponseNotFound
+
+    def serve_spa(request, path=''):
+        index = SPA_DIR / 'index.html'
+        if index.exists():
+            return FileResponse(index.open('rb'), content_type='text/html')
+        return HttpResponseNotFound('Frontend not built')
+
+    def serve_static_assets(request, path=''):
+        from django.views.static import serve as static_serve
+        asset = SPA_DIR / 'assets' / path
+        if asset.exists():
+            return static_serve(request, path, document_root=str(SPA_DIR / 'assets'))
+        return HttpResponseNotFound('Asset not found')
+
+    urlpatterns += [
+        re_path(r'^assets/(?P<path>.*)$', serve_static_assets),
+        re_path(r'^(?!api/|admin/|media/|static/).*$', serve_spa),
+    ]
