@@ -45,13 +45,14 @@ if SPA_DIR.exists():
     from django.views.static import serve as static_serve
 
     def serve_spa(request, path=''):
+        from django.http import FileResponse, HttpResponseNotFound
         index = SPA_DIR / 'index.html'
         if index.exists():
-            return static_serve(request, str(path or 'index.html'), document_root=str(SPA_DIR))
-        from django.http import HttpResponseNotFound
+            return FileResponse(index.open('rb'), content_type='text/html')
         return HttpResponseNotFound('Frontend not built')
 
     urlpatterns += [
         re_path(r'^(?:assets/.*)$', lambda req, path='': static_serve(req, path, document_root=str(SPA_DIR / 'assets'))),
+        re_path(r'^(?:favicon\.png|logo\.png)$', lambda req, path='': static_serve(req, path, document_root=str(SPA_DIR))),
         re_path(r'^(?!api/|admin/|media/|static/).*$', serve_spa),
     ]
