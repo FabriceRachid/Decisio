@@ -52,7 +52,7 @@ if SPA_DIR.exists():
         return HttpResponseNotFound('Frontend not built')
 
     urlpatterns += [
-        re_path(r'^(?:assets/.*)$', lambda req, path='': static_serve(req, path, document_root=str(SPA_DIR / 'assets'))),
+        re_path(r'^assets/(?P<path>.*)$', lambda req, path='': static_serve(req, path, document_root=str(SPA_DIR / 'assets'))),
         re_path(r'^(?:favicon\.png|logo\.png)$', lambda req, path='': static_serve(req, path, document_root=str(SPA_DIR))),
         re_path(r'^(?!api/|admin/|media/|static/).*$', serve_spa),
     ]
