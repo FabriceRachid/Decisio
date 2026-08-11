@@ -11,6 +11,14 @@ echo "=== Generating index.html ==="
 ENTRY_JS=$(basename $(ls decision-spark/dist/client/assets/index-*.js | head -1))
 echo "Entry JS: $ENTRY_JS"
 
+CSS_LINKS=""
+for css_file in decision-spark/dist/client/assets/*.css; do
+  css_name=$(basename "$css_file")
+  CSS_LINKS="${CSS_LINKS}
+<link rel=\"stylesheet\" href=\"/assets/${css_name}\" />"
+done
+echo "CSS files:$CSS_LINKS"
+
 cat > decision-spark/dist/client/index.html <<HTMLEOF
 <!DOCTYPE html>
 <html lang="fr">
@@ -18,7 +26,7 @@ cat > decision-spark/dist/client/index.html <<HTMLEOF
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DécisioBI</title>
-<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="icon" type="image/png" href="/favicon.png" />${CSS_LINKS}
 </head>
 <body>
 <div id="root"></div>
@@ -26,6 +34,9 @@ cat > decision-spark/dist/client/index.html <<HTMLEOF
 </body>
 </html>
 HTMLEOF
+
+echo "=== Generated index.html ==="
+cat decision-spark/dist/client/index.html
 
 echo "=== Copying to backend/frontend ==="
 mkdir -p backend/frontend
