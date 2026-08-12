@@ -21,7 +21,7 @@ openpyxl==3.1.0
 
 # ==================== MACHINE LEARNING (For Anomaly Detection & AI) ====================
 scikit-learn==1.3.0
-scipy==1.11.0
+scipy==1.17.1
 groq==0.9.0
 
 # ==================== BACKGROUND TASKS ====================
