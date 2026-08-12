@@ -206,6 +206,13 @@ class KPIAutoService:
                     null_ratio=round(null_ratio, 4),
                     unique_ratio=round(unique_ratio, 4),
                 ))
+            elif self._is_numeric_like(series):
+                numeric_cols.append(ColumnSuggestion(
+                    column=column, dtype="numeric",
+                    samples=samples,
+                    null_ratio=round(null_ratio, 4),
+                    unique_ratio=round(unique_ratio, 4),
+                ))
             elif column in ("client_id", "id_commande", "id") or column.endswith("_id"):
                 id_cols.append(ColumnSuggestion(
                     column=column, dtype="id",
@@ -227,6 +234,35 @@ class KPIAutoService:
             "date": date_cols,
             "id": id_cols,
         }
+
+    def _is_numeric_like(self, series: pd.Series) -> bool:
+        """Detect columns whose values look numeric even if stored as strings.
+
+        Handles plain floats stored as strings ('14122.61'), comma as decimal
+        separator ('1 234,56') and comma as thousands separator ('17,524.02').
+        """
+        if len(series) == 0:
+            return False
+        non_null = series.dropna()
+        if len(non_null) == 0:
+            return False
+        text = non_null.astype(str).str.strip()
+        if text.str.len().eq(0).mean() > 0.5:
+            return False
+
+        strategies = ["identity", "comma_to_dot", "comma_thousands"]
+        compact = text.map(lambda v: re.sub(r"[\s\u00a0\u202f]+", "", v).strip())
+        for strategy in strategies:
+            if strategy == "identity":
+                variants = compact
+            elif strategy == "comma_to_dot":
+                variants = compact.str.replace(",", ".")
+            else:
+                variants = compact.str.replace(",", "", regex=False)
+            converted = pd.to_numeric(variants, errors="coerce")
+            if converted.notna().mean() >= 0.9:
+                return True
+        return False
 
     def _suggest_metrics(self, columns: dict[str, list[ColumnSuggestion]], domain: str) -> list[MetricSuggestion]:
         suggestions: list[MetricSuggestion] = []

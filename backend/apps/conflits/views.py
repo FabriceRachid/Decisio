@@ -14,6 +14,7 @@ from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth.models import User
 from django.db import models
+from django.core.cache import cache
 
 from apps.conflits.models import (
     ConflictType, Conflict, ConflictResolution, ActivityLog, ScheduledJob
@@ -348,7 +349,12 @@ class ConflictViewSet(viewsets.ModelViewSet):
         GET /api/conflits/conflicts/dashboard_stats/
         """
         user = request.user
-        
+
+        cache_key = f'conflict_dashboard_stats_{user.id}'
+        cached_stats = cache.get(cache_key)
+        if cached_stats is not None:
+            return Response(cached_stats)
+
         organization_id = _organization_id_for_user(user)
         validated_source_ids = _validated_source_ids_for_queryset(
             _organization_scoped_sources(DataSource.objects.all(), user)
@@ -422,7 +428,9 @@ class ConflictViewSet(viewsets.ModelViewSet):
         }
         
         serializer = ConflictDashboardStatSerializer(stats)
-        return Response(serializer.data)
+        data = serializer.data
+        cache.set(cache_key, data, timeout=30)
+        return Response(data)
 
 
 class ConflictResolutionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -723,6 +731,12 @@ class ActivityFeedView(APIView):
         user = request.user
         org_id = _organization_id_for_user(user)
 
+        limit = min(int(request.query_params.get('limit', 50)), 100)
+        cache_key = f'activity_feed_{user.id}_{limit}'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response({'activities': cached})
+
         if org_id:
             org_user_ids = list(
                 User.objects.filter(
@@ -735,7 +749,6 @@ class ActivityFeedView(APIView):
         else:
             queryset = ActivityLog.objects.filter(user=user).select_related('user')
 
-        limit = min(int(request.query_params.get('limit', 50)), 100)
         activities = queryset.order_by('-created_at')[:limit]
 
         data = []
@@ -757,6 +770,7 @@ class ActivityFeedView(APIView):
                 'created_at': a.created_at.isoformat() if a.created_at else None,
             })
 
+        cache.set(cache_key, data, timeout=15)
         return Response({'activities': data})
 
 

@@ -42,7 +42,11 @@ def preview_cleaning(*, source, user, pipeline_id, rule_ids, include_all_auto_ru
     original_dataframe = _load_source_dataframe(source)
     if rule_ids and not include_all_auto_rules and not pipeline_id and not decision_overrides:
         result = _apply_rules(dataframe=original_dataframe, rules=rules, quality_gate=effective_quality_gate)
-        _, cleaning_report = _run_intelligent_engine(source=source, user=user, decision_overrides=decision_overrides or [])
+        cleaning_report = _build_rules_only_report(
+            dataframe=original_dataframe,
+            cleaned_dataframe=result['dataframe'],
+            validation_issues=result['validation_issues'],
+        )
     else:
         cleaned_dataframe, cleaning_report = _run_intelligent_engine(source=source, user=user, decision_overrides=decision_overrides or [])
         cleaned_dataframe, cleaning_report = _apply_engine_decisions(
@@ -670,6 +674,50 @@ def _build_no_rules_message(*, source, pipeline, rule_ids, include_all_auto_rule
         f'Aucune correction applicable n a ete trouvee pour {source.name}. '
         'Configure au moins une regle active ou un pipeline de nettoyage.'
     )
+
+
+def _build_rules_only_report(*, dataframe, cleaned_dataframe, validation_issues):
+    return {
+        'mapping': {'colonnes_mappees': [], 'colonnes_non_mappees': []},
+        'corrections': [
+            {
+                'regle': issue.get('rule'),
+                'severite': issue.get('code'),
+                'message': issue.get('message'),
+                'lignes': issue.get('row_numbers', []),
+            }
+            for issue in validation_issues
+        ],
+        'alertes': [
+            {
+                'regle': issue.get('rule'),
+                'severite': issue.get('code'),
+                'message': issue.get('message'),
+                'lignes': issue.get('row_numbers', []),
+            }
+            for issue in validation_issues
+        ],
+        'score_detail': {},
+        'metadata': {
+            'mode_application': 'rules_only',
+            'resume_executif': {
+                'statut': 'SUCCES',
+                'problemes_principaux': [],
+                'corrections_principales': [],
+                'impact_lignes': {
+                    'initiales': len(dataframe),
+                    'finales': len(cleaned_dataframe),
+                    'ecart': len(dataframe) - len(cleaned_dataframe),
+                },
+            },
+        },
+        'lignes_initiales': len(dataframe),
+        'lignes_finales': len(cleaned_dataframe),
+        'colonnes_initiales': len([c for c in dataframe.columns if c != '_row_number']),
+        'colonnes_finales': len([c for c in cleaned_dataframe.columns if c != '_row_number']),
+        'score_qualite': 100.0,
+        'statut': 'SUCCES',
+    }
 
 
 def _resolve_rules(*, user, explicit_rules, rule_ids, include_all_auto_rules):
@@ -1597,6 +1645,8 @@ def _record_mask_changes(dataframe, mask, column, changes_by_row, action):
 
 def _standardize_value(value, mode):
     if value in (None, ''):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return value
     string_value = str(value).strip()
     if mode == 'trim':

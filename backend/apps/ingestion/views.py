@@ -5,7 +5,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Prefetch
+from django.db import models
 from django.core.files.storage import FileSystemStorage
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -142,7 +143,15 @@ class DataSourceDetailView(generics.RetrieveUpdateDestroyAPIView):
         return DataSourceDetailSerializer
 
     def get_queryset(self):
-        queryset = DataSource.objects.select_related('uploaded_by').prefetch_related('raw_data_rows')
+        # Only prefetch the sample rows (serializer uses [:10]) to avoid
+        # materializing the entire raw dataset in memory on a detail GET.
+        queryset = DataSource.objects.select_related('uploaded_by').prefetch_related(
+            models.Prefetch(
+                'raw_data_rows',
+                queryset=RawData.objects.order_by('row_number')[:10],
+                to_attr='sample_rows_cache',
+            )
+        )
         return _organization_scoped_sources(queryset, self.request.user)
     
     def update(self, request, *args, **kwargs):

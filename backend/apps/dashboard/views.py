@@ -1,5 +1,6 @@
 from django.db import models
 from django.http import HttpResponse
+from django.core.cache import cache
 from django.utils.text import slugify
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -15,7 +16,7 @@ from apps.dashboard.serializers import (
     WidgetReorderSerializer,
     PreferenceUtilisateurSerializer, VuePersonnaliseeSerializer,
 )
-from apps.dashboard.services import auto_build_dashboard, add_widget_to_dashboard, build_business_rankings, default_preferences_for_role
+from apps.dashboard.services import auto_build_dashboard, add_widget_to_dashboard, build_business_rankings, default_preferences_for_role, dashboard_auto_cache_key, invalidate_dashboard_auto_cache, invalidate_dashboard_auto_cache_for_widget, DASHBOARD_AUTO_CACHE_TTL
 from apps.kpi.serializers import DashboardPreviewRequestSerializer
 from apps.kpi.services import M4WorkbenchService
 from apps.conflits.audit import log_activity
@@ -135,6 +136,7 @@ class WidgetViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         widget = serializer.save()
+        invalidate_dashboard_auto_cache_for_widget(widget)
         log_activity(
             action_type='create',
             resource_type='Widget',
@@ -147,6 +149,7 @@ class WidgetViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         widget = serializer.save()
+        invalidate_dashboard_auto_cache_for_widget(widget)
         log_activity(
             action_type='update',
             resource_type='Widget',
@@ -158,6 +161,7 @@ class WidgetViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
+        invalidate_dashboard_auto_cache_for_widget(instance)
         log_activity(
             action_type='delete',
             resource_type='Widget',
@@ -192,6 +196,7 @@ class WidgetViewSet(viewsets.ModelViewSet):
                     widget.height = item['height']
                     update_fields.append('height')
                 widget.save(update_fields=update_fields)
+                invalidate_dashboard_auto_cache_for_widget(widget)
                 updates.append(widget.id)
             except Widget.DoesNotExist:
                 errors.append({'id': item['id'], 'error': 'Widget not found'})
@@ -214,6 +219,7 @@ class WidgetViewSet(viewsets.ModelViewSet):
         config['chart_type_override'] = chart_type
         widget.configuration = config
         widget.save(update_fields=['configuration'])
+        invalidate_dashboard_auto_cache_for_widget(widget)
         return Response({'chart_type_override': chart_type})
 
 
@@ -246,6 +252,12 @@ class DashboardAutoBuildAPIView(APIView):
             return Response({'error': 'Dashboard introuvable.'}, status=status.HTTP_404_NOT_FOUND)
 
         from apps.ingestion.models import DataSource
+
+        cache_key = dashboard_auto_cache_key(request.user.id, source_id_int)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+
         widget_source_id = None
         first_widget = Widget.objects.filter(dashboard=dashboard).first()
         if first_widget and first_widget.configuration:
@@ -290,7 +302,7 @@ class DashboardAutoBuildAPIView(APIView):
                 'auto_generated': w.configuration.get('auto_generated', True),
                 'chart_type_override': w.configuration.get('chart_type_override'),
             })
-        return Response({
+        data = {
             'dashboard': {
                 'id': dashboard.id,
                 'name': dashboard.name,
@@ -300,7 +312,9 @@ class DashboardAutoBuildAPIView(APIView):
                 'domain': 'generic',
             },
             'widgets': widget_list,
-        })
+        }
+        cache.set(cache_key, data, timeout=DASHBOARD_AUTO_CACHE_TTL)
+        return Response(data)
 
     def post(self, request):
         source_id = request.data.get('source_id')
@@ -314,6 +328,7 @@ class DashboardAutoBuildAPIView(APIView):
             ps = date.fromisoformat(period_start) if period_start else None
             pe = date.fromisoformat(period_end) if period_end else None
             result = auto_build_dashboard(request.user, source_id, ps, pe, filters)
+            invalidate_dashboard_auto_cache(request.user.id, source_id)
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -329,6 +344,7 @@ class DashboardAddWidgetAPIView(APIView):
             return Response({'error': 'source_id et config sont requis.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             result = add_widget_to_dashboard(request.user, source_id, config)
+            invalidate_dashboard_auto_cache(request.user.id, int(source_id))
             return Response(result)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

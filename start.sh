@@ -3,7 +3,7 @@ set -e
 
 cd backend
 echo "=== Starting Django (gunicorn) on 127.0.0.1:8000 ==="
-gunicorn decisiobi.wsgi:application --bind 127.0.0.1:8000 --workers 1 --timeout 120 --access-logfile - --error-logfile - &
+gunicorn decisiobi.wsgi:application --bind 127.0.0.1:8000 --workers 1 --threads 4 --timeout 120 --access-logfile - --error-logfile - &
 GUNICORN_PID=$!
 cd ..
 

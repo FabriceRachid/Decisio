@@ -503,7 +503,7 @@ def _load_dataframe(*, filename, source_bytes, source_type, delimiter, encoding,
                     encoding=encoding,
                     header=header,
                 )
-                return dataframe, 'csv', resolved_delimiter, encoding
+                return dataframe, 'csv', resolved_delimiter, resolved_encoding
 
             if candidate_type == 'json':
                 dataframe = _read_json_dataframe(source_bytes=source_bytes, encoding=encoding)

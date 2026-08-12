@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
 from django.db import models
+from django.core.cache import cache
 from django.contrib.auth.models import User
 
 from apps.ingestion.models import DataSource, RawData
@@ -377,6 +378,26 @@ def _build_smart_widget_defs(
 def prettify_field(value: str) -> str:
     """Convert a field name to a human-readable label."""
     return value.replace('_', ' ').replace('-', ' ').title()
+
+
+DASHBOARD_AUTO_CACHE_TTL = 120
+
+
+def dashboard_auto_cache_key(user_id: int, source_id: int) -> str:
+    return f"dashboard_auto:{user_id}:{source_id}"
+
+
+def invalidate_dashboard_auto_cache(user_id: int | None, source_id: int | None) -> None:
+    """Supprime le résultat auto-build en cache pour un (user, source)."""
+    if user_id is not None and source_id is not None:
+        cache.delete(dashboard_auto_cache_key(user_id, source_id))
+
+
+def invalidate_dashboard_auto_cache_for_widget(widget) -> None:
+    """Invalide le cache du dashboard automatique lié à un widget."""
+    source_id = (widget.configuration or {}).get('source_id') or widget.data_source_id
+    user_id = widget.dashboard.created_by_id if widget.dashboard_id else None
+    invalidate_dashboard_auto_cache(user_id, source_id)
 
 
 def auto_build_dashboard(user: User, source_id: int, period_start: date | None = None, period_end: date | None = None, filters: dict | None = None) -> dict:

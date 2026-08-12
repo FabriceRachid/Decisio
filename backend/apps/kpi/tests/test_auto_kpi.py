@@ -176,6 +176,36 @@ def _build_sparse_sales_source(user, *, name="BadlyStructuredSales.xlsx") -> Dat
     return source
 
 
+def _build_stringified_numeric_source(user, *, name="Sales-Export_2019-2020.csv") -> DataSource:
+    """Source whose cleaned data stores numerics as strings (regression for source 2)."""
+    source = DataSource.objects.create(
+        name=name,
+        source_type="csv",
+        uploaded_by=user,
+        status="completed",
+        row_count=2,
+        column_count=4,
+    )
+    rows = [
+        {"date": "2/12/2020", "cost": "14122.61", "order_value_eur": "17,524.02", "country": "Sweden", "category": "Books"},
+        {"date": "3/12/2020", "cost": "92807.78", "order_value_eur": "1,234.56", "country": "France", "category": "Furniture"},
+    ]
+    raw_rows = [RawData.objects.create(source=source, row_number=index + 1, data=row) for index, row in enumerate(rows)]
+    job = CleaningJob.objects.create(
+        source=source,
+        created_by=user,
+        status="completed",
+        total_rows=len(rows),
+        rows_processed=len(rows),
+        rows_affected=len(rows),
+        progress_percent=100,
+        completed_at=timezone.now(),
+    )
+    for raw in raw_rows:
+        CleanedData.objects.create(job=job, original_data=raw, data=raw.data, changes_made=[], is_validated=True, validated_by=user)
+    return source
+
+
 @pytest.mark.django_db
 class TestAutoKPIDetectAPI:
     def test_detect_columns_from_validated_source(self, analyst_client, analyst_user):
@@ -257,6 +287,26 @@ class TestAutoKPIDetectAPI:
         assert "Sales" in numeric_names or "sales" in numeric_names
 
         assert len(response.data["columns"]["numeric"]) >= 1
+        assert len(response.data["suggestions"]) >= 1
+
+    def test_detect_numeric_columns_stored_as_strings(self, analyst_client, analyst_user):
+        """Regression: cleaned data from the standardize rule can persist
+        numerics as strings ('14122.61', '17,524.02'). They must still be
+        detected as measures."""
+        _attach_org(analyst_user, name="Sahel KPI")
+        source = _build_stringified_numeric_source(analyst_user)
+
+        response = analyst_client.post(
+            "/api/kpi/auto/detect/",
+            {"source_id": source.id},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        numeric_names = {c["name"] for c in response.data["columns"]["numeric"]}
+        assert "cost" in numeric_names
+        assert "order_value_eur" in numeric_names
+        assert "country" not in numeric_names
         assert len(response.data["suggestions"]) >= 1
 
     def test_detect_requires_source_id(self, analyst_client):

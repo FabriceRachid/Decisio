@@ -95,6 +95,9 @@ class DataSourceDetailSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_sample_rows(self, obj):
+        cached = getattr(obj, 'sample_rows_cache', None)
+        if cached is not None:
+            return RawDataSerializer(cached, many=True).data
         rows = obj.raw_data_rows.order_by('row_number')[:10]
         return RawDataSerializer(rows, many=True).data
 

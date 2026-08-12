@@ -80,6 +80,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django.middleware.gzip.GZipMiddleware',
     'corsheaders.middleware.CorsMiddleware',  # CORS middleware for frontend access
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -142,7 +143,22 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD', ''),
         'HOST': os.getenv('DB_HOST', 'localhost'),
         'PORT': os.getenv('DB_PORT', '5432'),
+        'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '60')),
     }
+}
+
+
+# Cache in-memory (fast, no external service). On Render free plan there is no
+# Redis, so we use LocMemCache with a sane TTL for hot read endpoints.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'decisio-default',
+        'TIMEOUT': int(os.getenv('CACHE_DEFAULT_TIMEOUT', '60')),
+        'OPTIONS': {
+            'MAX_ENTRIES': int(os.getenv('CACHE_MAX_ENTRIES', '512')),
+        },
+    },
 }
 
 
