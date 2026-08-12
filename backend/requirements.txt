@@ -34,7 +34,7 @@ gunicorn==22.0.0
 whitenoise==6.7.0
 
 # ==================== TESTING ====================
-setuptools==84.0.0
+setuptools==79.6.0
 pytest==7.4.0
 pytest-django==4.5.0
 pytest-cov==4.1.0
