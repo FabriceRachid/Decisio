@@ -2,7 +2,7 @@
 Django==6.0.3
 djangorestframework==3.17.0
 django-cors-headers==4.9.0
-django-filter==24.0  # For API filtering
+django-filter==25.2  # For API filtering
 
 # ==================== JWT AUTHENTICATION ====================
 djangorestframework-simplejwt==5.3.0
