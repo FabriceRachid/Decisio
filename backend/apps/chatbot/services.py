@@ -483,15 +483,20 @@ def process_chat_message(*, session: ChatSession, user, content: str, persist_an
     )
 
     try:
-        result, kpi_context, kpis = _run_assistant_engine(
-            user=user,
-            question=trimmed,
-            intent=intent,
-            domain=domain,
-            context=enriched_context,
-            model=model,
-            session=session,
-        )
+        small_talk_category = _detect_small_talk(trimmed)
+        if small_talk_category:
+            result = _build_small_talk_response(category=small_talk_category, user=user, question=trimmed)
+            kpi_context, kpis = [], []
+        else:
+            result, kpi_context, kpis = _run_assistant_engine(
+                user=user,
+                question=trimmed,
+                intent=intent,
+                domain=domain,
+                context=enriched_context,
+                model=model,
+                session=session,
+            )
 
         if persist_analysis and kpi_context is not None and not is_simple_greeting:
             try:
@@ -584,3 +589,75 @@ def _is_simple_message(text: str) -> bool:
     if len(lowered) < 15 and any(lowered.startswith(p) for p in simple_patterns):
         return True
     return False
+
+
+def _detect_small_talk(text: str) -> Optional[str]:
+    """Detect conversational small talk and return a category:
+    'greeting', 'identity', 'capabilities', 'thanks' or 'farewell'.
+    Returns None when the message requires data analysis."""
+    lowered = re.sub(r"[^a-z0-9éèêàçùôîûäöü\s]", ' ', text.lower())
+    lowered = re.sub(r'\s+', ' ', lowered).strip()
+
+    if re.match(r'^(bonjour|bonsoir|salut|hello|coucou|hey|yo|re)\b', lowered):
+        return 'greeting'
+    if re.match(r'^(merci|merci beaucoup|super|parfait|top|ok)\b', lowered):
+        return 'thanks'
+    if re.match(r'^(au revoir|bye|a bientot|a bientôt|a plus|bonne journee|bonne journée)\b', lowered):
+        return 'farewell'
+    if any(kw in lowered for kw in (
+        'qui es tu', 'qui es-tu', 'tu es qui', 'qui tu es',
+        'presente toi', 'présente toi', 'presente toi', 'cest quoi toi', 'c est quoi toi',
+    )):
+        return 'identity'
+    if any(kw in lowered for kw in (
+        'que fais tu', 'que fais-tu', 'quest ce que tu fais', 'qu est ce que tu fais',
+        'qu est-ce que tu fais', 'que sais tu faire', 'que sais-tu faire',
+        'tu peux faire quoi', 'tu sais faire quoi', 'tu peux faire',
+        'que peux tu faire', 'qu est ce que tu sais faire', 'a quoi tu sers', 'à quoi tu sers',
+        'quelle est ta mission', 'quel est ton role', 'quel est ton rôle',
+    )):
+        return 'capabilities'
+    return None
+
+
+SMALL_TALK_RESPONSES = {
+    'greeting': (
+        "Bonjour ! Je suis Decisio AI, votre analyste de données. "
+        "Je peux analyser vos KPIs, expliquer vos indicateurs, détecter des anomalies ou vous aider à comprendre vos données. "
+        "Posez-moi une question sur vos chiffres, par exemple : Quels KPI expliquent la baisse de marge ?"
+    ),
+    'thanks': (
+        "Avec plaisir ! N'hésitez pas si vous voulez approfondir un chiffre, comparer des indicateurs "
+        "ou préparer un rapport. Je suis là pour ça."
+    ),
+    'farewell': (
+        "Au revoir ! Bonne journée. Revenez quand vous voulez analyser vos données, je serai là."
+    ),
+    'identity': (
+        "Je suis Decisio AI, un assistant d'analyse de données conçu pour votre entreprise. "
+        "Je m'appuie sur vos sources de données, vos KPIs et vos widgets pour vous aider à comprendre "
+        "vos performances : tendances, anomalies, écarts aux objectifs. "
+        "Je ne fabrique aucune donnée : tout ce que je vous dis vient de vos fichiers et indicateurs."
+    ),
+    'capabilities': (
+        "Je peux vous aider sur plusieurs choses :\n"
+        "- Analyser vos **KPIs** et expliquer leurs évolutions\n"
+        "- **Détecter des anomalies** (variations, écarts aux objectifs)\n"
+        "- Comparer des **dimensions** (régions, produits, clients...)\n"
+        "- Décrire le **contenu d'un fichier** (colonnes, types, échantillons)\n"
+        "- Résumer vos **alertes** et priorités\n\n"
+        "Posez-moi une question sur vos données, par exemple : Quels KPI expliquent la baisse de marge ?"
+    ),
+}
+
+
+def _build_small_talk_response(*, category: str, user, question: str) -> dict:
+    text = SMALL_TALK_RESPONSES.get(category, SMALL_TALK_RESPONSES['capabilities'])
+    return {
+        'text': text,
+        'model': 'decisio-ai',
+        'tokens_used': 0,
+        'processing_time_ms': 0,
+        'fallback_used': False,
+        'suggested_questions': CHATBOT_DEFAULT_SUGGESTIONS,
+    }

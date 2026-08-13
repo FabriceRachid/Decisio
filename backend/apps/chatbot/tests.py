@@ -153,3 +153,51 @@ class ChatbotApiTests(APITestCase):
         self.assertEqual(response.data['bot_message']['model_used'], 'chatbot-fallback')
         self.assertTrue(response.data['bot_message']['fallback_used'])
         self.assertIn('synthese heuristique', response.data['bot_message']['content'])
+
+    @patch('apps.chatbot.services.interpret_kpis_with_groq')
+    def test_greeting_answers_without_data_analysis(self, mock_groq):
+        session_response = self.client.post('/api/chatbot/sessions/', {'session_name': 'Salutations'}, format='json')
+        session_id = session_response.data['id']
+
+        response = self.client.post(
+            f'/api/chatbot/sessions/{session_id}/messages/',
+            {'content': 'Bonjour, ca va ?'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mock_groq.assert_not_called()
+        self.assertEqual(response.data['bot_message']['model_used'], 'decisio-ai')
+        self.assertIn('Bonjour', response.data['bot_message']['content'])
+
+    @patch('apps.chatbot.services.interpret_kpis_with_groq')
+    def test_identity_question_answers_without_data_analysis(self, mock_groq):
+        session_response = self.client.post('/api/chatbot/sessions/', {'session_name': 'Identite'}, format='json')
+        session_id = session_response.data['id']
+
+        response = self.client.post(
+            f'/api/chatbot/sessions/{session_id}/messages/',
+            {'content': 'Qui es-tu ?'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mock_groq.assert_not_called()
+        self.assertEqual(response.data['bot_message']['model_used'], 'decisio-ai')
+        self.assertIn('Decisio AI', response.data['bot_message']['content'])
+
+    @patch('apps.chatbot.services.interpret_kpis_with_groq')
+    def test_capabilities_question_answers_without_data_analysis(self, mock_groq):
+        session_response = self.client.post('/api/chatbot/sessions/', {'session_name': 'Capacites'}, format='json')
+        session_id = session_response.data['id']
+
+        response = self.client.post(
+            f'/api/chatbot/sessions/{session_id}/messages/',
+            {'content': 'Qu est-ce que tu fais ?'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mock_groq.assert_not_called()
+        self.assertEqual(response.data['bot_message']['model_used'], 'decisio-ai')
+        self.assertIn('Analyser vos', response.data['bot_message']['content'])
