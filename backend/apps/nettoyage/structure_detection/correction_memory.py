@@ -25,6 +25,11 @@ def _background_load_model():
     model_name = getattr(
         settings, 'STRUCTURE_DETECTION_EMBEDDING_MODEL', 'all-MiniLM-L6-v2'
     )
+    if not getattr(settings, 'STRUCTURE_DETECTION_EMBEDDINGS_ENABLED', True):
+        logger.info("SentenceTransformer embeddings disabled via settings, using fallback hashing")
+        CorrectionMemory._class_load_failed = True
+        _model_loaded = True
+        return
     try:
         from sentence_transformers import SentenceTransformer
         CorrectionMemory._class_model = SentenceTransformer(model_name)

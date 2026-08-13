@@ -644,17 +644,14 @@ class TriggerReportView(APIView):
             recipients = config.notification_recipients or []
             if recipients:
                 try:
-                    from django.core.mail import EmailMessage
-                    from django.conf import settings
+                    from apps.notifications.services import send_mail_async
 
-                    email = EmailMessage(
+                    send_mail_async(
                         subject=f"Rapport DécisioBI — {config.job_name}",
-                        body=f"Bonjour,\n\nVeuillez trouver ci-joint le rapport « {config.job_name} » généré le {timezone.now().strftime('%d/%m/%Y à %H:%M')}.\n\n— DécisioBI",
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        to=recipients,
+                        message=f"Bonjour,\n\nVeuillez trouver ci-joint le rapport « {config.job_name} » généré le {timezone.now().strftime('%d/%m/%Y à %H:%M')}.\n\n— DécisioBI",
+                        recipient_list=recipients,
+                        attachments=[(filename, pdf_bytes, "application/pdf")],
                     )
-                    email.attach(filename, pdf_bytes, "application/pdf")
-                    email.send(fail_silently=False)
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).warning(

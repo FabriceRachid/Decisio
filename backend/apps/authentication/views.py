@@ -465,13 +465,12 @@ class PasswordResetRequestView(APIView):
                 'reset_url': reset_url,
             })
 
-            send_mail(
+            from apps.notifications.services import send_mail_async
+            send_mail_async(
                 subject='DecisioBI - Réinitialisation de mot de passe',
                 message=f'Cliquez sur ce lien pour réinitialiser votre mot de passe : {reset_url}',
                 html_message=html_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[email],
-                fail_silently=False,
             )
 
         return Response({
@@ -563,13 +562,12 @@ class AdminUserListView(generics.ListCreateAPIView):
             })
 
             try:
-                send_mail(
+                from apps.notifications.services import send_mail_async
+                send_mail_async(
                     subject=f'Bienvenue sur {org_name} - DecisioBI',
                     message=f'Vous avez été invité sur {org_name}. Connectez-vous ici : {login_url}',
                     html_message=html_message,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[user.email],
-                    fail_silently=False,
                 )
                 invitation_email_sent = True
             except Exception as exc:

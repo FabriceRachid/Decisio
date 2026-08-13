@@ -5,6 +5,7 @@ Handles email, webhook, and in-app notification delivery.
 
 import json
 import logging
+import threading
 from typing import List, Optional
 
 import requests
@@ -15,6 +16,59 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+def send_mail_async(
+    *,
+    subject: str,
+    message: str,
+    from_email: Optional[str] = None,
+    recipient_list: List[str],
+    html_message: Optional[str] = None,
+    attachments: Optional[List[tuple]] = None,
+    **kwargs,
+) -> None:
+    """Send an email in a background thread so the HTTP request never blocks.
+
+    Uses daemon threads with a short SMTP timeout; failures are logged but never
+    raise into the request handler. ``attachments`` is a list of
+    ``(filename, content, mimetype)`` tuples.
+    """
+    from django.core.mail import EmailMultiAlternatives
+
+    def _send():
+        try:
+            email = EmailMultiAlternatives(
+                subject=subject,
+                body=message,
+                from_email=from_email or getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@decisiobi.local'),
+                to=recipient_list,
+                connection=email_connection,
+            )
+            if html_message:
+                email.attach_alternative(html_message, 'text/html')
+            for attachment in attachments or []:
+                email.attach(*attachment)
+            email.send(fail_silently=True)
+            logger.info("Email sent to %s: %s", recipient_list, subject)
+        except Exception as e:
+            logger.error("Failed to send email to %s (%s): %s", recipient_list, subject, e)
+
+    email_connection = None
+    try:
+        from django.core.mail import get_connection
+        email_connection = get_connection(fail_silently=True)
+        email_connection.timeout = 15
+    except Exception as e:
+        logger.warning("Could not build SMTP connection: %s", e)
+
+    from django.conf import settings as dj_settings
+    if getattr(dj_settings, 'EMAIL_BACKEND', '') == 'django.core.mail.backends.locmem.EmailBackend':
+        _send()
+        return
+
+    t = threading.Thread(target=_send, daemon=True)
+    t.start()
 
 
 class NotificationService:

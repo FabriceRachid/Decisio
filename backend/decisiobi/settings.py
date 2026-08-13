@@ -260,6 +260,11 @@ SIMPLE_JWT = {
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_KPI_MODEL = os.getenv('GROQ_KPI_MODEL', 'llama-3.3-70b-versatile')
 
+# ==================== Structure detection embeddings (sentence-transformers) ====================
+# Set to False on memory-constrained hosts (e.g. Render free) to skip loading torch.
+# Falls back to deterministic hashing embeddings.
+STRUCTURE_DETECTION_EMBEDDINGS_ENABLED = os.getenv('STRUCTURE_DETECTION_EMBEDDINGS_ENABLED', 'True').lower() == 'true'
+
 
 # ==================== Email / Password reset ====================
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
