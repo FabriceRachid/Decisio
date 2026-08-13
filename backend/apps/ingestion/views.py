@@ -207,10 +207,7 @@ class DataSourceDetailView(generics.RetrieveUpdateDestroyAPIView):
             status_code=status.HTTP_204_NO_CONTENT,
         )
         
-        return Response(
-            {'message': f'Source {instance.name} has been archived.'},
-            status=status.HTTP_204_NO_CONTENT
-        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class DataSourceUploadView(APIView):
