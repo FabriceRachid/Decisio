@@ -709,6 +709,7 @@ def email_diagnostics(request):
         'use_ssl': use_ssl,
         'host_user_configured': bool(host_user),
         'password_configured': bool(getattr(settings, 'EMAIL_HOST_PASSWORD', '')),
+        'brevo_api_key_configured': bool(getattr(settings, 'BREVO_API_KEY', '')),
         'from_email': getattr(settings, 'DEFAULT_FROM_EMAIL', ''),
         'smtp_connection': None,
         'test_send': None,
@@ -718,28 +719,39 @@ def email_diagnostics(request):
         report['smtp_connection'] = 'locmem (test backend) - no real SMTP'
         return Response(report)
 
-    if not host_user or not getattr(settings, 'EMAIL_HOST_PASSWORD', ''):
-        report['smtp_connection'] = (
-            'MISSING: EMAIL_HOST_USER and/or EMAIL_HOST_PASSWORD are not set. '
-            'Configure them in the Render dashboard env vars.'
-        )
-        return Response(report)
-
-    try:
-        import smtplib
-        if use_ssl:
-            conn = smtplib.SMTP_SSL(host, port, timeout=10)
+    if backend == 'apps.notifications.backends.BrevoEmailBackend':
+        report['smtp_connection'] = 'Brevo HTTP API (Render free tier blocks outbound SMTP)'
+        if not getattr(settings, 'BREVO_API_KEY', ''):
+            report['smtp_connection'] = (
+                'MISSING: BREVO_API_KEY is not set. Configure it in the Render dashboard env vars.'
+            )
+        elif not getattr(settings, 'DEFAULT_FROM_EMAIL', ''):
+            report['smtp_connection'] = (
+                'MISSING: DEFAULT_FROM_EMAIL is not set (must be a sender verified in Brevo).'
+            )
+    else:
+        if not host_user or not getattr(settings, 'EMAIL_HOST_PASSWORD', ''):
+            report['smtp_connection'] = (
+                'MISSING: EMAIL_HOST_USER and/or EMAIL_HOST_PASSWORD are not set. '
+                'Configure them in the Render dashboard env vars.'
+            )
         else:
-            conn = smtplib.SMTP(host, port, timeout=10)
-            if use_tls:
-                conn.starttls()
-        conn.login(host_user, settings.EMAIL_HOST_PASSWORD)
-        conn.quit()
-        report['smtp_connection'] = 'OK - authentication succeeded'
-    except Exception as exc:
-        report['smtp_connection'] = f'FAILED: {type(exc).__name__}: {exc}'
+            try:
+                import smtplib
+                if use_ssl:
+                    conn = smtplib.SMTP_SSL(host, port, timeout=10)
+                else:
+                    conn = smtplib.SMTP(host, port, timeout=10)
+                    if use_tls:
+                        conn.starttls()
+                conn.login(host_user, settings.EMAIL_HOST_PASSWORD)
+                conn.quit()
+                report['smtp_connection'] = 'OK - authentication succeeded'
+            except Exception as exc:
+                report['smtp_connection'] = f'FAILED: {type(exc).__name__}: {exc}'
 
-    if report['smtp_connection'].startswith('OK'):
+    smtp_ok = isinstance(report['smtp_connection'], str) and report['smtp_connection'].startswith(('OK', 'Brevo'))
+    if smtp_ok and not report['smtp_connection'].startswith('MISSING'):
         try:
             from django.core.mail import send_mail
             sent = send_mail(
