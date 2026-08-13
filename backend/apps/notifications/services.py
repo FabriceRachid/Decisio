@@ -5,7 +5,6 @@ Handles email, webhook, and in-app notification delivery.
 
 import json
 import logging
-import threading
 from typing import List, Optional
 
 import requests
@@ -28,47 +27,44 @@ def send_mail_async(
     attachments: Optional[List[tuple]] = None,
     **kwargs,
 ) -> None:
-    """Send an email in a background thread so the HTTP request never blocks.
+    """Send an email.
 
-    Uses daemon threads with a short SMTP timeout; failures are logged but never
-    raise into the request handler. ``attachments`` is a list of
-    ``(filename, content, mimetype)`` tuples.
+    Sends synchronously with a short SMTP timeout so the email is never lost
+    (daemon threads can be dropped when a gunicorn request finishes). Failures
+    are logged with the full error but never raise into the request handler.
+    ``attachments`` is a list of ``(filename, content, mimetype)`` tuples.
     """
     from django.core.mail import EmailMultiAlternatives
-
-    def _send():
-        try:
-            email = EmailMultiAlternatives(
-                subject=subject,
-                body=message,
-                from_email=from_email or getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@decisiobi.local'),
-                to=recipient_list,
-                connection=email_connection,
-            )
-            if html_message:
-                email.attach_alternative(html_message, 'text/html')
-            for attachment in attachments or []:
-                email.attach(*attachment)
-            email.send(fail_silently=True)
-            logger.info("Email sent to %s: %s", recipient_list, subject)
-        except Exception as e:
-            logger.error("Failed to send email to %s (%s): %s", recipient_list, subject, e)
+    from django.core.mail import get_connection
 
     email_connection = None
     try:
-        from django.core.mail import get_connection
-        email_connection = get_connection(fail_silently=True)
+        email_connection = get_connection()
         email_connection.timeout = 15
     except Exception as e:
         logger.warning("Could not build SMTP connection: %s", e)
 
-    from django.conf import settings as dj_settings
-    if getattr(dj_settings, 'EMAIL_BACKEND', '') == 'django.core.mail.backends.locmem.EmailBackend':
-        _send()
-        return
-
-    t = threading.Thread(target=_send, daemon=True)
-    t.start()
+    try:
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=message,
+            from_email=from_email or getattr(settings, 'DEFAULT_FROM_EMAIL', 'no-reply@decisiobi.local'),
+            to=recipient_list,
+            connection=email_connection,
+        )
+        if html_message:
+            email.attach_alternative(html_message, 'text/html')
+        for attachment in attachments or []:
+            email.attach(*attachment)
+        email.send(fail_silently=False)
+        logger.info("Email sent to %s: %s", recipient_list, subject)
+    except Exception as e:
+        logger.exception(
+            "Failed to send email to %s (%s): %s",
+            recipient_list,
+            subject,
+            e,
+        )
 
 
 class NotificationService:

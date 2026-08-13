@@ -711,6 +711,7 @@ def email_diagnostics(request):
         'password_configured': bool(getattr(settings, 'EMAIL_HOST_PASSWORD', '')),
         'from_email': getattr(settings, 'DEFAULT_FROM_EMAIL', ''),
         'smtp_connection': None,
+        'test_send': None,
     }
 
     if backend == 'django.core.mail.backends.locmem.EmailBackend':
@@ -737,6 +738,25 @@ def email_diagnostics(request):
         report['smtp_connection'] = 'OK - authentication succeeded'
     except Exception as exc:
         report['smtp_connection'] = f'FAILED: {type(exc).__name__}: {exc}'
+
+    if report['smtp_connection'].startswith('OK'):
+        try:
+            from django.core.mail import send_mail
+            sent = send_mail(
+                subject='[DecisioBI] Test de configuration email',
+                message=(
+                    'Bonjour,\n\n'
+                    'Ceci est un email de test envoyé depuis DécisioBI.\n'
+                    'Si vous le recevez, la configuration email fonctionne correctement.\n\n'
+                    '— DécisioBI'
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[request.user.email],
+                fail_silently=False,
+            )
+            report['test_send'] = f'OK - email envoyé à {request.user.email} ({sent} message)'
+        except Exception as exc:
+            report['test_send'] = f'FAILED: {type(exc).__name__}: {exc}'
 
     return Response(report)
 
