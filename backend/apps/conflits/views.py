@@ -654,7 +654,7 @@ class TriggerReportView(APIView):
                         to=recipients,
                     )
                     email.attach(filename, pdf_bytes, "application/pdf")
-                    email.send(fail_silently=True)
+                    email.send(fail_silently=False)
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).warning(

@@ -42,6 +42,19 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    from django.views.static import serve as static_serve
+
+    def serve_media(request, path):
+        from django.http import HttpResponseNotFound
+        file_path = (settings.MEDIA_ROOT / path).resolve()
+        if file_path.is_file() and str(file_path).startswith(str(settings.MEDIA_ROOT.resolve())):
+            return static_serve(request, path, document_root=str(settings.MEDIA_ROOT))
+        return HttpResponseNotFound('Media not found')
+
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve_media),
+    ]
 
 SPA_DIR = settings.BASE_DIR / 'frontend'
 if SPA_DIR.exists():

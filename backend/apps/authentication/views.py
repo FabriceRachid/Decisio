@@ -572,7 +572,11 @@ class AdminUserListView(generics.ListCreateAPIView):
                     fail_silently=False,
                 )
                 invitation_email_sent = True
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Invitation email to %s failed: %s", user.email, exc
+                )
                 invitation_email_sent = False
 
         response_data = AdminUserSerializer(user).data
@@ -680,6 +684,63 @@ def check_auth_status(request):
             'locked_until': user.profile.locked_until,
         }
     })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def email_diagnostics(request):
+    """
+    Diagnose email/SMTP configuration without exposing secrets.
+    GET /api/auth/email/diagnostics/ (admin or superuser)
+    """
+    if not (request.user.is_superuser or getattr(request.user.profile, 'role', None) == 'admin'):
+        return Response({'error': 'Admins only'}, status=status.HTTP_403_FORBIDDEN)
+
+    host = getattr(settings, 'EMAIL_HOST', '')
+    port = getattr(settings, 'EMAIL_PORT', 0)
+    host_user = getattr(settings, 'EMAIL_HOST_USER', '')
+    backend = getattr(settings, 'EMAIL_BACKEND', '')
+    use_tls = getattr(settings, 'EMAIL_USE_TLS', False)
+    use_ssl = getattr(settings, 'EMAIL_USE_SSL', False)
+
+    report = {
+        'backend': backend,
+        'host': host,
+        'port': port,
+        'use_tls': use_tls,
+        'use_ssl': use_ssl,
+        'host_user_configured': bool(host_user),
+        'password_configured': bool(getattr(settings, 'EMAIL_HOST_PASSWORD', '')),
+        'from_email': getattr(settings, 'DEFAULT_FROM_EMAIL', ''),
+        'smtp_connection': None,
+    }
+
+    if backend == 'django.core.mail.backends.locmem.EmailBackend':
+        report['smtp_connection'] = 'locmem (test backend) - no real SMTP'
+        return Response(report)
+
+    if not host_user or not getattr(settings, 'EMAIL_HOST_PASSWORD', ''):
+        report['smtp_connection'] = (
+            'MISSING: EMAIL_HOST_USER and/or EMAIL_HOST_PASSWORD are not set. '
+            'Configure them in the Render dashboard env vars.'
+        )
+        return Response(report)
+
+    try:
+        import smtplib
+        if use_ssl:
+            conn = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            conn = smtplib.SMTP(host, port, timeout=10)
+            if use_tls:
+                conn.starttls()
+        conn.login(host_user, settings.EMAIL_HOST_PASSWORD)
+        conn.quit()
+        report['smtp_connection'] = 'OK - authentication succeeded'
+    except Exception as exc:
+        report['smtp_connection'] = f'FAILED: {type(exc).__name__}: {exc}'
+
+    return Response(report)
 
 
 def _get_client_ip(request):

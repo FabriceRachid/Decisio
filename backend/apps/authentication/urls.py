@@ -23,6 +23,7 @@ from apps.authentication.views import (
     AdminUserDetailView,
     AdminUpdateUserRoleView,
     check_auth_status,
+    email_diagnostics,
 )
 from apps.authentication.notification_views import (
     NotificationListView,
@@ -58,6 +59,7 @@ urlpatterns = [
     
     # ==================== Utility ====================
     path('status/', check_auth_status, name='auth_status'),
+    path('email/diagnostics/', email_diagnostics, name='email_diagnostics'),
     
     # ==================== Admin Endpoints ====================
     path('admin/users/', AdminUserListView.as_view(), name='admin_user_list'),
