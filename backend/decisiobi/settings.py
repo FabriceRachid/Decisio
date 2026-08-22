@@ -258,7 +258,7 @@ SIMPLE_JWT = {
 
 # ==================== M6 — Groq (interpretation KPI) ====================
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
-GROQ_KPI_MODEL = os.getenv('GROQ_KPI_MODEL', 'llama-3.3-70b-versatile')
+GROQ_KPI_MODEL = os.getenv('GROQ_KPI_MODEL', 'openai/gpt-oss-120b')
 
 # ==================== Structure detection embeddings (sentence-transformers) ====================
 # Set to False on memory-constrained hosts (e.g. Render free) to skip loading torch.

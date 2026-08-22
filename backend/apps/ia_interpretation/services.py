@@ -405,7 +405,7 @@ def interpret_kpis_with_groq(
             "GROQ_API_KEY n est pas configuree. Ajoutez-la dans l environnement pour activer l interpretation."
         )
 
-    model_name = (model or getattr(settings, "GROQ_KPI_MODEL", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile").strip()
+    model_name = (model or getattr(settings, "GROQ_KPI_MODEL", "openai/gpt-oss-120b") or "openai/gpt-oss-120b").strip()
 
     from groq import Groq
 
