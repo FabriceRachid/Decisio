@@ -17,7 +17,6 @@ import { JourneySteps } from "@/components/app/PageHeader";
 import { EmptyState, ErrorState, PageBody, SkeletonCards, StatusBadge } from "@/components/app/kit";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DashboardHealth, DashboardSignals } from "@/components/dashboard/DashboardInsights";
 import { can, getCurrentUserProfile } from "@/lib/rbac";
 import {
   apiClient,
@@ -33,8 +32,6 @@ import {
   FILTER_FIELD_MAP,
   getPeriodDates,
   hasBreakdown,
-  isGeoWidget,
-  isTimeWidget,
   prettifyField,
 } from "@/lib/dashboard-utils";
 import { KpiCard } from "@/components/dashboard/widgets/KpiCard";
@@ -517,47 +514,6 @@ function DashboardPage() {
     [selectedSourceId, navigate],
   );
 
-  const dashboardLayout = useMemo(() => {
-    const data = dashboard;
-    if (!data) {
-      return {
-        kpiWidgets: [] as WidgetData[],
-        geoWidget: null as WidgetData | null,
-        trendWidgets: [] as WidgetData[],
-        otherWidgets: [] as WidgetData[],
-        totalRows: 0,
-        averageQuality: undefined as number | undefined,
-      };
-    }
-    const validWidgets = data.widgets.filter(
-      (w) => !w.payload?.error && !removedWidgetIds.has(w.id),
-    );
-    const kpiWidgets = validWidgets.filter((w) => !hasBreakdown(w)).slice(0, 8);
-    const allCharts = validWidgets.filter((w) => hasBreakdown(w) || w.type === "world_map");
-    const geoWidget = allCharts.find((w) => w.type === "world_map" || isGeoWidget(w)) || null;
-    const trendWidgets = allCharts.filter(
-      (w) =>
-        (w.type === "area_chart" || w.type === "line_chart" || isTimeWidget(w)) &&
-        w.id !== geoWidget?.id,
-    );
-    const otherWidgets = allCharts.filter(
-      (w) => w.id !== geoWidget?.id && !trendWidgets.find((t) => t.id === w.id),
-    );
-    const qualityScores = validWidgets
-      .map((w) => w.payload?.data_quality_score)
-      .filter((s): s is number => typeof s === "number");
-    return {
-      kpiWidgets,
-      geoWidget,
-      trendWidgets,
-      otherWidgets,
-      totalRows: validWidgets.reduce((sum, w) => sum + (w.payload?.rows_processed || 0), 0),
-      averageQuality: qualityScores.length
-        ? Math.round(qualityScores.reduce((sum, s) => sum + s, 0) / qualityScores.length)
-        : undefined,
-    };
-  }, [dashboard, removedWidgetIds]);
-
   const computeDefaultLayout = useCallback((widgets: WidgetData[]) => {
     const kpis = widgets.filter((w) => w.type === "metric_card");
     const charts = widgets.filter((w) => w.type !== "metric_card");
@@ -768,14 +724,6 @@ function DashboardPage() {
           <JourneySteps role={role} current="visualise" className="-mx-1 xl:mx-0" />
         </section>
 
-        <DashboardHealth
-          role={role}
-          sourceCount={sources.length}
-          sourcesLoading={loading}
-          averageQuality={dashboardLayout.averageQuality}
-          onNavigate={(to) => void navigate({ to })}
-        />
-
         {loading ? (
           <div className="space-y-4" aria-busy="true">
             <SkeletonCards count={3} className="xl:grid-cols-3" />
@@ -961,8 +909,6 @@ function DashboardPage() {
             )}
           </>
         )}
-
-        <DashboardSignals role={role} />
       </PageBody>
     </div>
   );

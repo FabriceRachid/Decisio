@@ -1,6 +1,4 @@
 import {
-  Bell,
-  Bot,
   FileText,
   GitMerge,
   LayoutDashboard,
@@ -79,31 +77,17 @@ export const NAV_GROUPS: NavGroup[] = [
         cap: "read:dashboard",
         hint: "Valeurs atypiques détectées par Isolation Forest",
       },
-      {
-        to: "/app/alerts",
-        label: "Alertes KPI",
-        icon: Bell,
-        cap: "read:alerts",
-        hint: "Seuils de surveillance sur vos indicateurs",
-      },
     ],
   },
   {
     section: "Analyse",
     items: [
       {
-        to: "/app/analyse",
-        label: "Analyse IA",
-        icon: Bot,
-        cap: "read:kpi",
-        hint: "Interprétation de vos KPI en langage clair",
-      },
-      {
         to: "/app/chatbot",
         label: "Assistant IA",
         icon: MessageSquare,
         cap: "use:chatbot",
-        hint: "Questions sur vos données en français",
+        hint: "Questions sur vos données importées, en français",
       },
     ],
   },
@@ -161,7 +145,7 @@ export const JOURNEY: JourneyStep[] = [
   { key: "prepare", label: "Préparer", to: "/app/import", cap: "write:data" },
   { key: "validate", label: "Valider", to: "/app/import", cap: "write:data" },
   { key: "control", label: "Contrôler", to: "/app/conflicts", cap: "read:conflicts" },
-  { key: "analyse", label: "Analyser", to: "/app/analyse", cap: "read:kpi" },
+  { key: "analyse", label: "Analyser", to: "/app/chatbot", cap: "use:chatbot" },
   { key: "visualise", label: "Visualiser", to: "/app/dashboard", cap: "read:dashboard" },
   { key: "report", label: "Reporter", to: "/app/reports", cap: "read:dashboard" },
   { key: "decide", label: "Décider", to: "/app/chatbot", cap: "use:chatbot" },
