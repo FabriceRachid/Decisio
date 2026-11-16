@@ -256,6 +256,9 @@ SIMPLE_JWT = {
     'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
 }
 
+# Password-reset links expire after one hour; the email uses this same value.
+PASSWORD_RESET_TIMEOUT = 60 * 60
+
 # ==================== M6 — Groq (interpretation KPI) ====================
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_KPI_MODEL = os.getenv('GROQ_KPI_MODEL', 'openai/gpt-oss-120b')

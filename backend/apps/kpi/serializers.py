@@ -303,8 +303,8 @@ class KPIAlertListSerializer(serializers.ModelSerializer):
         model = KPIAlert
         fields = [
             'id', 'alert_name', 'kpi_name', 'kpi_code', 'alert_type',
-            'condition_type', 'threshold_value', 'is_active', 'is_triggered',
-            'last_triggered_at', 'trigger_count', 'created_by_name', 'created_at'
+            'condition_type', 'threshold_value', 'threshold_percent', 'is_active', 'is_triggered',
+            'last_triggered_at', 'acknowledged_at', 'trigger_count', 'created_by_name', 'created_at'
         ]
 
 

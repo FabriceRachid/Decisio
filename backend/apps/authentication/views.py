@@ -463,12 +463,17 @@ class PasswordResetRequestView(APIView):
             html_message = render_to_string('emails/password_reset.html', {
                 'user': user,
                 'reset_url': reset_url,
+                'reset_expiry_minutes': settings.PASSWORD_RESET_TIMEOUT // 60,
             })
 
             from apps.notifications.services import send_mail_async
             send_mail_async(
                 subject='DecisioBI - Réinitialisation de mot de passe',
-                message=f'Cliquez sur ce lien pour réinitialiser votre mot de passe : {reset_url}',
+                message=(
+                    f'Cliquez sur ce lien pour réinitialiser votre mot de passe : {reset_url}\n\n'
+                    f'Ce lien est valable pendant {settings.PASSWORD_RESET_TIMEOUT // 60} minutes. '
+                    'Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.'
+                ),
                 html_message=html_message,
                 recipient_list=[email],
             )
