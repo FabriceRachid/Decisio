@@ -1,0 +1,315 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* Titres : Manrope partout (site public et application). */
+  --font-display: "Manrope", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-brand: "Manrope", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Site public — palette A « Nuit & Ambre ».
+     cta : seule couleur d'action principale ; data : liens et données ;
+     ink-* : niveaux de texte sur fond nuit, tous ≥ 4.5:1 de contraste. */
+  --color-night: #0b1426;
+  --color-night-elevated: #121e36;
+  --color-night-line: #22304d;
+  --color-cta: #f5b02e;
+  --color-cta-hover: #ffc24d;
+  --color-cta-foreground: #1a1204;
+  --color-data: #60a5fa;
+  --color-ink: #e8edf5;
+  --color-ink-muted: #b4bfd1;
+  --color-ink-subtle: #8a97ad;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-strong: var(--primary-strong);
+  --color-data-strong: var(--data-strong);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-gold: var(--gold);
+  --color-gold-foreground: var(--gold-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+}
+
+/* Thème de l'application — palette A « Nuit & Ambre ».
+   Structure nuit (barre latérale), espace de travail clair pour la lecture des données,
+   ambre = seule couleur d'action, bleu = données. Textes ≥ 4.5:1 sur fond blanc. */
+:root {
+  --radius: 0.75rem;
+
+  --background: #f5f7fb;
+  --foreground: #0f1a2e;
+
+  --card: #ffffff;
+  --card-foreground: #0f1a2e;
+
+  --popover: #ffffff;
+  --popover-foreground: #0f1a2e;
+
+  /* Remplissage des actions principales (texte sombre dessus) */
+  --primary: #f5b02e;
+  --primary-foreground: #1a1204;
+  /* Ambre lisible en texte/icône sur fond clair (5.6:1) */
+  --primary-strong: #9a5800;
+  /* Bleu « données » lisible en texte sur fond clair */
+  --data-strong: #1d4ed8;
+
+  --secondary: #eef1f6;
+  --secondary-foreground: #1b2740;
+
+  --muted: #f0f3f8;
+  --muted-foreground: #55627a;
+
+  --accent: #eef2f8;
+  --accent-foreground: #0f1a2e;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+
+  --success: #047857;
+  --success-foreground: #ffffff;
+
+  --warning: #f59e0b;
+  --warning-foreground: #422006;
+
+  --info: #2563eb;
+  --info-foreground: #ffffff;
+
+  --gold: #f5b02e;
+  --gold-foreground: #1a1204;
+
+  --border: #e3e8f0;
+  --input: #d5dce7;
+  --ring: #c27803;
+
+  /* Barre latérale — nuit */
+  --sidebar: #0b1426;
+  --sidebar-foreground: #b4bfd1;
+  --sidebar-primary: #f5b02e;
+  --sidebar-primary-foreground: #1a1204;
+  --sidebar-accent: #16233f;
+  --sidebar-accent-foreground: #e8edf5;
+  --sidebar-border: #1c2943;
+  --sidebar-ring: #f5b02e;
+
+  /* Séries de graphiques : bleu données en tête, ambre en accent */
+  --chart-1: #2563eb;
+  --chart-2: #0d9488;
+  --chart-3: #f5b02e;
+  --chart-4: #7c3aed;
+  --chart-5: #16a34a;
+  --chart-6: #e11d48;
+  --chart-7: #0891b2;
+  --chart-8: #64748b;
+
+  /* Decisio brand tokens */
+  --decisio-night: #0b1426;
+  --decisio-night-2: #121e36;
+  --decisio-cream: #fbf7ee;
+  --decisio-gold: #f5b02e;
+  --decisio-gold-soft: #ffd98a;
+
+  --gradient-hero:
+    radial-gradient(
+      120% 80% at 50% 0%,
+      color-mix(in oklab, var(--decisio-gold) 12%, transparent) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      80% 60% at 80% 100%,
+      color-mix(in oklab, var(--primary) 18%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(180deg, var(--decisio-night) 0%, var(--decisio-night-2) 100%);
+  --gradient-gold: linear-gradient(135deg, #ffc24d, #f5b02e);
+  --gradient-primary: linear-gradient(135deg, #1c2d52, #0b1426);
+  --gradient-soft: linear-gradient(180deg, #f5f7fb 0%, #eef1f6 100%);
+  --shadow-card: 0 1px 2px 0 rgb(15 26 46 / 0.05), 0 1px 3px 0 rgb(15 26 46 / 0.04);
+  --shadow-elev: 0 12px 40px -12px rgb(15 26 46 / 0.22);
+  --shadow-glow: 0 0 60px -10px color-mix(in oklab, var(--decisio-gold) 40%, transparent);
+  --shadow-widget-hover: 0 4px 12px -2px rgb(15 26 46 / 0.08), 0 12px 32px -8px rgb(15 26 46 / 0.1);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html,
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .bg-hero {
+    background: var(--gradient-hero);
+  }
+  .bg-gold-gradient {
+    background-image: var(--gradient-gold);
+  }
+  .bg-primary-gradient {
+    background: var(--gradient-primary);
+  }
+  .bg-soft-gradient {
+    background: var(--gradient-soft);
+  }
+  .text-gold {
+    color: var(--decisio-gold);
+  }
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-elev {
+    box-shadow: var(--shadow-elev);
+  }
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+  .shadow-widget-hover {
+    box-shadow: var(--shadow-widget-hover);
+  }
+  .glass {
+    background: color-mix(in oklab, white 70%, transparent);
+    backdrop-filter: blur(12px);
+  }
+  .glass-dark {
+    background: color-mix(in oklab, var(--decisio-night) 60%, transparent);
+    backdrop-filter: blur(14px);
+    border: 1px solid color-mix(in oklab, white 8%, transparent);
+  }
+  .ring-gold {
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--decisio-gold) 40%, transparent);
+  }
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, white 4%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, white 4%, transparent) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  .bg-public-hero {
+    background:
+      radial-gradient(
+        60% 50% at 50% 0%,
+        color-mix(in oklab, #3b82f6 16%, transparent) 0%,
+        transparent 70%
+      ),
+      radial-gradient(
+        40% 35% at 85% 20%,
+        color-mix(in oklab, #f5b02e 8%, transparent) 0%,
+        transparent 70%
+      ),
+      #0b1426;
+  }
+  .shadow-cta {
+    box-shadow: 0 8px 24px -8px color-mix(in oklab, #f5b02e 55%, transparent);
+  }
+  .focus-ring-cta {
+    outline: none;
+  }
+  .focus-ring-cta:focus-visible {
+    box-shadow:
+      0 0 0 2px #0b1426,
+      0 0 0 4px #f5b02e;
+  }
+}
+
+/* React Grid Layout overrides */
+.react-grid-layout-custom {
+  position: relative;
+  min-height: 200px;
+}
+.react-grid-layout-custom .react-grid-item {
+  transition: none;
+  cursor: grab;
+}
+.react-grid-layout-custom .react-grid-item:hover {
+  outline: 2px dashed var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-xl);
+}
+.react-grid-layout-custom .react-grid-item:active {
+  cursor: grabbing;
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.react-grid-layout-custom .react-grid-item > .react-resizable-handle {
+  z-index: 10;
+}
+.react-grid-layout-custom .react-grid-item > .react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--muted-foreground);
+  border-bottom: 2px solid var(--muted-foreground);
+  opacity: 0.3;
+  transition: opacity 0.2s;
+}
+.react-grid-layout-custom .react-grid-item:hover > .react-resizable-handle::after {
+  opacity: 0.8;
+}
+.react-grid-layout-custom .react-grid-placeholder {
+  background: var(--primary) !important;
+  border-radius: var(--radius-xl) !important;
+  opacity: 0.15 !important;
+}
